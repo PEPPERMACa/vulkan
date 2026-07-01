@@ -8,6 +8,54 @@ over the GPU, memory, rendering operations, and synchronization.
 This control can improve performance, but it also means the application must
 describe many details that higher-level graphics APIs manage automatically.
 
+## Current Study Progress
+
+The code is currently at Lesson 09.
+
+Lessons completed:
+
+1. Instance and physical-device discovery
+2. Window surface
+3. Queue-family discovery
+4. Logical device and queues
+5. Swapchain support checks
+6. Swapchain and swapchain images
+7. Image views
+8. Render pass
+9. Shaders and graphics pipeline
+
+Current state:
+
+```text
+[DONE] Window and surface
+          |
+[DONE] Select physical device
+          |
+[DONE] Create logical device and queues
+          |
+[DONE] Create swapchain images
+          |
+[DONE] Create image views
+          |
+[DONE] Describe render pass
+          |
+[DONE] Compile shaders and create shader modules
+          |
+[DONE] Create graphics pipeline
+          |
+[NEXT] Create framebuffers
+          |
+[TODO] Record command buffers
+          |
+[TODO] Synchronize, submit, and present
+          |
+       Visible triangle
+```
+
+The window is still blank because creating the pipeline only prepares the
+drawing recipe. We have not yet connected actual swapchain image views through
+framebuffers, recorded GPU commands, submitted work, or presented frames.
+
 ## GLFW
 
 GLFW is not part of Vulkan. It provides platform-independent window creation,
@@ -143,10 +191,40 @@ Our render pass describes one color attachment:
 The render pass is a contract or recipe. It does not identify a particular
 swapchain image and does not execute drawing by itself.
 
-## Shaders and Graphics Pipeline
+Important render-pass pieces in the current code:
+
+- Attachment description: what kind of image will be used.
+- Attachment reference: which attachment slot the subpass reads/writes.
+- Subpass: one step of rendering work inside the render pass.
+- Subpass dependency: ordering and memory rules around the subpass.
+
+The current render pass has one subpass and one color attachment. Later, each
+framebuffer will provide the actual swapchain image view for attachment slot
+`0`.
+
+## Shaders, Shader Modules, and SPIR-V
 
 A shader is a small program executed by the GPU. We write shaders in GLSL and
 compile them into SPIR-V binaries, which Vulkan loads into shader modules.
+
+In this project:
+
+```text
+shaders/triangle.vert -> glslc -> triangle.vert.spv
+shaders/triangle.frag -> glslc -> triangle.frag.spv
+```
+
+`glslc` is the shader compiler. GLSL is the human-readable shader language.
+SPIR-V is the compiled binary format Vulkan accepts.
+
+A `VkShaderModule` is a Vulkan object created from SPIR-V bytes. It means:
+
+```text
+"Here is one compiled shader program that can be used in a pipeline stage."
+```
+
+A shader module does not draw anything by itself. The graphics pipeline says
+which stage uses the module, and which entry function to run.
 
 Our vertex shader runs once for each of the triangle's three vertices. It uses
 `gl_VertexIndex` to select a position and color:
@@ -159,6 +237,21 @@ Vertex 2 -> position 2 + blue
 
 Our fragment shader runs for the generated fragments, which roughly correspond
 to candidate pixels covered by the triangle. It writes a final color.
+
+The vertex shader outputs RGB color as a `vec3`. The fragment shader receives
+that color, adds alpha, and writes a `vec4`:
+
+```text
+vec3(1.0, 0.0, 0.0) -> red
+vec3(0.0, 1.0, 0.0) -> green
+vec3(0.0, 0.0, 1.0) -> blue
+vec4(color, 1.0)    -> RGB plus fully opaque alpha
+```
+
+## Graphics Pipeline
+
+The graphics pipeline is Vulkan's drawing recipe. It gathers shader stages and
+fixed-function settings into one object.
 
 The graphics pipeline connects several fixed stages:
 
@@ -173,6 +266,22 @@ Fragment shader: calculate colors
     |
 Color blending: write colors to the attachment
 ```
+
+The current graphics pipeline includes:
+
+- Shader stages: one vertex shader and one fragment shader.
+- Vertex input: empty, because the triangle data is hardcoded in the vertex
+  shader instead of coming from a vertex buffer.
+- Input assembly: groups every three vertices into a triangle.
+- Viewport: maps rendering into the swapchain extent.
+- Scissor: limits rendering to the swapchain rectangle.
+- Rasterizer: fills triangles and turns them into fragments.
+- Multisampling: currently one sample per pixel, so no MSAA yet.
+- Color blending: writes RGBA output directly, with blending disabled.
+- Pipeline layout: currently empty because there are no uniforms, textures,
+  descriptor sets, or push constants.
+- Render pass compatibility: the pipeline is built for subpass `0` of the
+  current render pass.
 
 The pipeline layout describes resources shaders may access. It is empty for
 this lesson because our shader positions and colors are written directly into
@@ -209,6 +318,17 @@ VkImage -> VkImageView -> VkFramebuffer
 
 `VkFramebuffer` is an upcoming link that pairs actual image views with the
 attachments described by a render pass.
+
+The render pass says what attachment slots exist. The framebuffer says which
+actual image views fill those slots for a specific render target.
+
+For the next lesson, we will create one framebuffer per swapchain image view:
+
+```text
+Framebuffer 0 -> image view 0 -> swapchain image 0
+Framebuffer 1 -> image view 1 -> swapchain image 1
+Framebuffer 2 -> image view 2 -> swapchain image 2
+```
 
 ## Rough Diagrams
 
@@ -328,45 +448,27 @@ T4         Rendering        Available        Displaying
 This is only a simplified timeline. Real scheduling depends on the present
 mode, synchronization, GPU speed, and display refresh.
 
-### 6. What We Have and What Is Missing
+### 6. Lesson 09 Pipeline Setup
 
 ```text
-[DONE] Window and surface
-          |
-[DONE] Select physical device
-          |
-[DONE] Create logical device and queues
-          |
-[DONE] Create swapchain images
-          |
-[DONE] Create image views
-          |
-[DONE] Describe render pass
-          |
-[DONE] Create graphics pipeline and shaders
-          |
-[NEXT] Create framebuffers
-          |
-[TODO] Record command buffers
-          |
-[TODO] Synchronize, submit, and present
-          |
-       Visible triangle
+GLSL shader source
+        |
+        v
+glslc compiles to SPIR-V
+        |
+        v
+VkShaderModule
+        |
+        v
+VkPipelineShaderStageCreateInfo
+        |
+        v
+VkGraphicsPipelineCreateInfo
+        |
+        v
+VkPipeline
 ```
 
-## Current Progress
-
-Lessons completed:
-
-1. Instance and physical-device discovery
-2. Window surface
-3. Queue-family discovery
-4. Logical device and queues
-5. Swapchain support
-6. Swapchain and swapchain images
-7. Image views
-8. Render pass
-9. Graphics pipeline and shaders
-
-The window is still blank because we have not created framebuffers, command
-buffers, synchronization objects, or the draw loop yet.
+Lesson 09 creates the pipeline, but the app still does not issue draw commands.
+A future command buffer must begin the render pass, bind the pipeline, and call
+`vkCmdDraw`.
