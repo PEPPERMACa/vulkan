@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -52,6 +53,11 @@ struct SwapChainContext {
     VkExtent2D extent{};
 };
 
+struct GraphicsPipelineContext {
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+};
+
 std::vector<const char*> getRequiredExtensions() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -94,7 +100,7 @@ VkInstance createInstance() {
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 08";
+    appInfo.pApplicationName = "Vulkan Lesson 09";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -570,6 +576,183 @@ VkRenderPass createRenderPass(VkDevice device, VkFormat swapChainImageFormat) {
     return renderPass;
 }
 
+std::vector<char> readFile(const std::string& filename) {
+    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open shader file: " + filename);
+    }
+
+    const std::streamsize fileSize = file.tellg();
+    std::vector<char> buffer(static_cast<size_t>(fileSize));
+
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+    return buffer;
+}
+
+VkShaderModule createShaderModule(
+    VkDevice device,
+    const std::vector<char>& shaderCode
+) {
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = shaderCode.size();
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(shaderCode.data());
+
+    VkShaderModule shaderModule = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create shader module.");
+    }
+
+    return shaderModule;
+}
+
+GraphicsPipelineContext createGraphicsPipeline(
+    VkDevice device,
+    VkExtent2D swapChainExtent,
+    VkRenderPass renderPass
+) {
+    const auto vertexShaderCode = readFile(
+        std::string(SHADER_DIR) + "/triangle.vert.spv"
+    );
+    const auto fragmentShaderCode = readFile(
+        std::string(SHADER_DIR) + "/triangle.frag.spv"
+    );
+
+    VkShaderModule vertexShaderModule = createShaderModule(device, vertexShaderCode);
+    VkShaderModule fragmentShaderModule = createShaderModule(device, fragmentShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertexShaderStageInfo{};
+    vertexShaderStageInfo.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertexShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertexShaderStageInfo.module = vertexShaderModule;
+    vertexShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragmentShaderStageInfo{};
+    fragmentShaderStageInfo.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragmentShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragmentShaderStageInfo.module = fragmentShaderModule;
+    fragmentShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {
+        vertexShaderStageInfo,
+        fragmentShaderStageInfo,
+    };
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    VkViewport viewport{};
+    viewport.x = 0.0F;
+    viewport.y = 0.0F;
+    viewport.width = static_cast<float>(swapChainExtent.width);
+    viewport.height = static_cast<float>(swapChainExtent.height);
+    viewport.minDepth = 0.0F;
+    viewport.maxDepth = 1.0F;
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = swapChainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0F;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT |
+        VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT |
+        VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+    GraphicsPipelineContext context{};
+    if (vkCreatePipelineLayout(
+            device,
+            &pipelineLayoutInfo,
+            nullptr,
+            &context.layout
+        ) != VK_SUCCESS) {
+        vkDestroyShaderModule(device, fragmentShaderModule, nullptr);
+        vkDestroyShaderModule(device, vertexShaderModule, nullptr);
+        throw std::runtime_error("Failed to create pipeline layout.");
+    }
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.layout = context.layout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
+    if (vkCreateGraphicsPipelines(
+            device,
+            VK_NULL_HANDLE,
+            1,
+            &pipelineInfo,
+            nullptr,
+            &context.pipeline
+        ) != VK_SUCCESS) {
+        vkDestroyPipelineLayout(device, context.layout, nullptr);
+        vkDestroyShaderModule(device, fragmentShaderModule, nullptr);
+        vkDestroyShaderModule(device, vertexShaderModule, nullptr);
+        throw std::runtime_error("Failed to create graphics pipeline.");
+    }
+
+    vkDestroyShaderModule(device, fragmentShaderModule, nullptr);
+    vkDestroyShaderModule(device, vertexShaderModule, nullptr);
+
+    std::cout << "Created graphics pipeline.\n";
+    return context;
+}
+
 } // namespace
 
 int main() {
@@ -588,7 +771,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 08",
+            "Vulkan Lesson 09",
             nullptr,
             nullptr
         );
@@ -612,11 +795,18 @@ int main() {
             deviceContext.device,
             swapChainContext.imageFormat
         );
+        GraphicsPipelineContext graphicsPipeline = createGraphicsPipeline(
+            deviceContext.device,
+            swapChainContext.extent,
+            renderPass
+        );
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
         }
 
+        vkDestroyPipeline(deviceContext.device, graphicsPipeline.pipeline, nullptr);
+        vkDestroyPipelineLayout(deviceContext.device, graphicsPipeline.layout, nullptr);
         vkDestroyRenderPass(deviceContext.device, renderPass, nullptr);
         for (VkImageView imageView : swapChainContext.imageViews) {
             vkDestroyImageView(deviceContext.device, imageView, nullptr);
