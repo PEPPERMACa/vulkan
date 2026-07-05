@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 09.
+The code is currently at Lesson 10.
 
 Lessons completed:
 
@@ -23,6 +23,7 @@ Lessons completed:
 7. Image views
 8. Render pass
 9. Shaders and graphics pipeline
+10. Framebuffers
 
 Current state:
 
@@ -43,18 +44,18 @@ Current state:
           |
 [DONE] Create graphics pipeline
           |
-[NEXT] Create framebuffers
+[DONE] Create framebuffers
           |
-[TODO] Record command buffers
+[NEXT] Record command buffers
           |
 [TODO] Synchronize, submit, and present
           |
        Visible triangle
 ```
 
-The window is still blank because creating the pipeline only prepares the
-drawing recipe. We have not yet connected actual swapchain image views through
-framebuffers, recorded GPU commands, submitted work, or presented frames.
+The window is still blank because framebuffers only connect render-pass
+attachment slots to real swapchain image views. We have not yet recorded GPU
+commands, submitted work, or presented frames.
 
 ## GLFW
 
@@ -316,19 +317,24 @@ VkImage -> VkImageView -> VkFramebuffer
                          present
 ```
 
-`VkFramebuffer` is an upcoming link that pairs actual image views with the
-attachments described by a render pass.
+`VkFramebuffer` pairs actual image views with the attachments described by a
+render pass.
 
 The render pass says what attachment slots exist. The framebuffer says which
 actual image views fill those slots for a specific render target.
 
-For the next lesson, we will create one framebuffer per swapchain image view:
+Because the swapchain owns multiple images, we create one framebuffer per
+swapchain image view:
 
 ```text
 Framebuffer 0 -> image view 0 -> swapchain image 0
 Framebuffer 1 -> image view 1 -> swapchain image 1
 Framebuffer 2 -> image view 2 -> swapchain image 2
 ```
+
+Each framebuffer uses the same render pass and swapchain extent. Later, when we
+acquire a swapchain image, we will choose the framebuffer with the same index
+and begin the render pass using that framebuffer.
 
 ## Rough Diagrams
 
@@ -472,3 +478,22 @@ VkPipeline
 Lesson 09 creates the pipeline, but the app still does not issue draw commands.
 A future command buffer must begin the render pass, bind the pipeline, and call
 `vkCmdDraw`.
+
+### 7. Lesson 10 Framebuffer Setup
+
+```text
+VkRenderPass
+    says attachment slot 0 is a color target
+        |
+        v
+VkImageView
+    describes one swapchain image as a color image
+        |
+        v
+VkFramebuffer
+    connects that image view to attachment slot 0
+```
+
+Lesson 10 creates render targets for the future command buffers. It still does
+not draw because no command buffer has begun a render pass, bound the pipeline,
+or issued `vkCmdDraw` yet.

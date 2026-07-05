@@ -49,6 +49,7 @@ struct SwapChainContext {
     VkSwapchainKHR swapChain = VK_NULL_HANDLE;
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;
+    std::vector<VkFramebuffer> framebuffers;
     VkFormat imageFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D extent{};
 };
@@ -100,7 +101,7 @@ VkInstance createInstance() {
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 09";
+    appInfo.pApplicationName = "Vulkan Lesson 10";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -753,6 +754,46 @@ GraphicsPipelineContext createGraphicsPipeline(
     return context;
 }
 
+void createFramebuffers(
+    VkDevice device,
+    SwapChainContext& swapChainContext,
+    VkRenderPass renderPass
+) {
+    swapChainContext.framebuffers.resize(swapChainContext.imageViews.size());
+
+    for (size_t i = 0; i < swapChainContext.imageViews.size(); ++i) {
+        VkImageView attachments[] = {
+            swapChainContext.imageViews[i],
+        };
+
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.width = swapChainContext.extent.width;
+        framebufferInfo.height = swapChainContext.extent.height;
+        framebufferInfo.layers = 1;
+
+        if (vkCreateFramebuffer(
+                device,
+                &framebufferInfo,
+                nullptr,
+                &swapChainContext.framebuffers[i]
+            ) != VK_SUCCESS) {
+            for (VkFramebuffer framebuffer : swapChainContext.framebuffers) {
+                if (framebuffer != VK_NULL_HANDLE) {
+                    vkDestroyFramebuffer(device, framebuffer, nullptr);
+                }
+            }
+            throw std::runtime_error("Failed to create framebuffer.");
+        }
+    }
+
+    std::cout << "Created swap chain framebuffers: "
+              << swapChainContext.framebuffers.size() << '\n';
+}
+
 } // namespace
 
 int main() {
@@ -771,7 +812,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 09",
+            "Vulkan Lesson 10",
             nullptr,
             nullptr
         );
@@ -800,11 +841,19 @@ int main() {
             swapChainContext.extent,
             renderPass
         );
+        createFramebuffers(
+            deviceContext.device,
+            swapChainContext,
+            renderPass
+        );
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
         }
 
+        for (VkFramebuffer framebuffer : swapChainContext.framebuffers) {
+            vkDestroyFramebuffer(deviceContext.device, framebuffer, nullptr);
+        }
         vkDestroyPipeline(deviceContext.device, graphicsPipeline.pipeline, nullptr);
         vkDestroyPipelineLayout(deviceContext.device, graphicsPipeline.layout, nullptr);
         vkDestroyRenderPass(deviceContext.device, renderPass, nullptr);
