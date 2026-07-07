@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 10.
+The code is currently at Lesson 11.
 
 Lessons completed:
 
@@ -24,6 +24,7 @@ Lessons completed:
 8. Render pass
 9. Shaders and graphics pipeline
 10. Framebuffers
+11. Command pool and command buffers
 
 Current state:
 
@@ -46,16 +47,16 @@ Current state:
           |
 [DONE] Create framebuffers
           |
-[NEXT] Record command buffers
+[DONE] Record command buffers
           |
-[TODO] Synchronize, submit, and present
+[NEXT] Synchronize, submit, and present
           |
        Visible triangle
 ```
 
-The window is still blank because framebuffers only connect render-pass
-attachment slots to real swapchain image views. We have not yet recorded GPU
-commands, submitted work, or presented frames.
+The window is still blank because command buffers only record GPU commands.
+We have not yet acquired a swapchain image, submitted a command buffer to the
+graphics queue, or presented the image.
 
 ## GLFW
 
@@ -291,6 +292,44 @@ the shader source.
 Creating a pipeline does not draw anything. A future command buffer must bind
 the pipeline and issue `vkCmdDraw`.
 
+## Command Pool and Command Buffers
+
+Vulkan work is submitted through command buffers. A command buffer is a recorded
+list of GPU commands.
+
+The command pool owns memory used by command buffers. It is tied to a queue
+family, so our command pool uses the graphics queue family.
+
+For the current app, we record one command buffer per framebuffer:
+
+```text
+commandBuffer[0] -> framebuffer[0] -> imageView[0]
+commandBuffer[1] -> framebuffer[1] -> imageView[1]
+commandBuffer[2] -> framebuffer[2] -> imageView[2]
+```
+
+Each command buffer records the same drawing recipe, but targets a different
+framebuffer:
+
+```text
+Begin command buffer
+    Begin render pass for framebuffer[i]
+        Bind graphics pipeline
+        Draw 3 vertices
+    End render pass
+End command buffer
+```
+
+The `vkCmdDraw(commandBuffer, 3, 1, 0, 0)` call means:
+
+- Draw 3 vertices.
+- Draw 1 instance.
+- Start at vertex index 0.
+- Start at instance index 0.
+
+The vertex shader uses `gl_VertexIndex` values `0`, `1`, and `2` to choose the
+three hardcoded triangle positions and colors.
+
 ## How the Pieces Connect
 
 ```text
@@ -497,3 +536,24 @@ VkFramebuffer
 Lesson 10 creates render targets for the future command buffers. It still does
 not draw because no command buffer has begun a render pass, bound the pipeline,
 or issued `vkCmdDraw` yet.
+
+### 8. Lesson 11 Command Buffer Setup
+
+```text
+VkCommandPool
+    owns command-buffer memory for the graphics queue family
+        |
+        v
+VkCommandBuffer
+    records commands for one framebuffer
+        |
+        v
+Begin render pass
+Bind graphics pipeline
+vkCmdDraw 3 vertices
+End render pass
+```
+
+Lesson 11 records drawing commands, but the app still does not show the
+triangle because nothing submits those command buffers to the graphics queue
+or presents the rendered swapchain image yet.

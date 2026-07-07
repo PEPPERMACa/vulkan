@@ -59,6 +59,11 @@ struct GraphicsPipelineContext {
     VkPipeline pipeline = VK_NULL_HANDLE;
 };
 
+struct CommandContext {
+    VkCommandPool pool = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer> buffers;
+};
+
 std::vector<const char*> getRequiredExtensions() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -101,7 +106,7 @@ VkInstance createInstance() {
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 10";
+    appInfo.pApplicationName = "Vulkan Lesson 11";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -794,6 +799,91 @@ void createFramebuffers(
               << swapChainContext.framebuffers.size() << '\n';
 }
 
+CommandContext createCommandContext(
+    VkDevice device,
+    VkPhysicalDevice physicalDevice,
+    VkSurfaceKHR surface,
+    const SwapChainContext& swapChainContext,
+    VkRenderPass renderPass,
+    const GraphicsPipelineContext& graphicsPipeline
+) {
+    QueueFamilyIndices queueFamilyIndices = findQueueFamilies(
+        physicalDevice,
+        surface
+    );
+
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+
+    CommandContext context{};
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &context.pool) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create command pool.");
+    }
+
+    context.buffers.resize(swapChainContext.framebuffers.size());
+
+    /* Command buffer pool owns and allocates memory for command buffers */
+    VkCommandBufferAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocateInfo.commandPool = context.pool;
+    allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocateInfo.commandBufferCount = static_cast<uint32_t>(context.buffers.size());
+
+    if (vkAllocateCommandBuffers(
+            device,
+            &allocateInfo,
+            context.buffers.data()
+        ) != VK_SUCCESS) {
+        vkDestroyCommandPool(device, context.pool, nullptr);
+        throw std::runtime_error("Failed to allocate command buffers.");
+    }
+
+    for (size_t i = 0; i < context.buffers.size(); ++i) {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        if (vkBeginCommandBuffer(context.buffers[i], &beginInfo) != VK_SUCCESS) {
+            vkDestroyCommandPool(device, context.pool, nullptr);
+            throw std::runtime_error("Failed to begin recording command buffer.");
+        }
+
+        VkClearValue clearColor{};
+        clearColor.color = {{0.0F, 0.0F, 0.0F, 1.0F}};
+
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPass;
+        renderPassInfo.framebuffer = swapChainContext.framebuffers[i];
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = swapChainContext.extent;
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+
+        vkCmdBeginRenderPass(
+            context.buffers[i],
+            &renderPassInfo,
+            VK_SUBPASS_CONTENTS_INLINE
+        );
+        vkCmdBindPipeline(
+            context.buffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            graphicsPipeline.pipeline
+        );
+        vkCmdDraw(context.buffers[i], 3, 1, 0, 0);
+        vkCmdEndRenderPass(context.buffers[i]);
+
+        if (vkEndCommandBuffer(context.buffers[i]) != VK_SUCCESS) {
+            vkDestroyCommandPool(device, context.pool, nullptr);
+            throw std::runtime_error("Failed to record command buffer.");
+        }
+    }
+
+    std::cout << "Recorded command buffers: " << context.buffers.size() << '\n';
+    return context;
+}
+
 } // namespace
 
 int main() {
@@ -812,7 +902,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 10",
+            "Vulkan Lesson 11",
             nullptr,
             nullptr
         );
@@ -846,11 +936,20 @@ int main() {
             swapChainContext,
             renderPass
         );
+        CommandContext commandContext = createCommandContext(
+            deviceContext.device,
+            physicalDevice,
+            surface,
+            swapChainContext,
+            renderPass,
+            graphicsPipeline
+        );
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
         }
 
+        vkDestroyCommandPool(deviceContext.device, commandContext.pool, nullptr);
         for (VkFramebuffer framebuffer : swapChainContext.framebuffers) {
             vkDestroyFramebuffer(deviceContext.device, framebuffer, nullptr);
         }
