@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 11.
+The code is currently at Lesson 12.
 
 Lessons completed:
 
@@ -25,6 +25,7 @@ Lessons completed:
 9. Shaders and graphics pipeline
 10. Framebuffers
 11. Command pool and command buffers
+12. Synchronization, submit, and present
 
 Current state:
 
@@ -49,14 +50,14 @@ Current state:
           |
 [DONE] Record command buffers
           |
-[NEXT] Synchronize, submit, and present
+[DONE] Synchronize, submit, and present
           |
-       Visible triangle
+[DONE] Visible triangle
 ```
 
-The window is still blank because command buffers only record GPU commands.
-We have not yet acquired a swapchain image, submitted a command buffer to the
-graphics queue, or presented the image.
+The app now acquires a swapchain image, submits the matching command buffer to
+the graphics queue, and presents the rendered image. This is the first point
+where the triangle should appear on screen.
 
 ## GLFW
 
@@ -330,6 +331,40 @@ The `vkCmdDraw(commandBuffer, 3, 1, 0, 0)` call means:
 The vertex shader uses `gl_VertexIndex` values `0`, `1`, and `2` to choose the
 three hardcoded triangle positions and colors.
 
+## Synchronization, Submit, and Present
+
+Vulkan does not automatically keep the CPU, graphics queue, swapchain, and
+presentation engine in lockstep. We use synchronization objects to describe the
+safe order of work.
+
+Current synchronization objects:
+
+- `imageAvailableSemaphore`: rendering waits until the swapchain image is ready.
+- `renderFinishedSemaphore`: presentation waits until rendering is finished.
+- `inFlightFence`: the CPU waits until the previous submitted frame is done.
+
+One frame now follows this order:
+
+```text
+Wait for previous frame fence
+        |
+Acquire swapchain image
+        |
+Reset fence
+        |
+Submit commandBuffer[imageIndex]
+    waits on imageAvailableSemaphore
+    signals renderFinishedSemaphore
+    signals inFlightFence when complete
+        |
+Present image
+    waits on renderFinishedSemaphore
+```
+
+The fence is created in the signaled state so the first frame can start without
+waiting forever. After that, each submission signals the fence when the GPU has
+finished the submitted work.
+
 ## How the Pieces Connect
 
 ```text
@@ -557,3 +592,21 @@ End render pass
 Lesson 11 records drawing commands, but the app still does not show the
 triangle because nothing submits those command buffers to the graphics queue
 or presents the rendered swapchain image yet.
+
+### 9. Lesson 12 Submit and Present
+
+```text
+vkAcquireNextImageKHR
+    gives imageIndex
+        |
+        v
+vkQueueSubmit
+    submits commandBuffer[imageIndex] to graphics queue
+        |
+        v
+vkQueuePresentKHR
+    presents swapchain image imageIndex
+```
+
+Lesson 12 is the first lesson where the recorded command buffer is executed and
+the rendered swapchain image is presented to the window.

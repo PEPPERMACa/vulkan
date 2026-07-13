@@ -64,6 +64,12 @@ struct CommandContext {
     std::vector<VkCommandBuffer> buffers;
 };
 
+struct SyncContext {
+    VkSemaphore imageAvailableSemaphore = VK_NULL_HANDLE;
+    VkSemaphore renderFinishedSemaphore = VK_NULL_HANDLE;
+    VkFence inFlightFence = VK_NULL_HANDLE;
+};
+
 std::vector<const char*> getRequiredExtensions() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -106,7 +112,7 @@ VkInstance createInstance() {
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 11";
+    appInfo.pApplicationName = "Vulkan Lesson 12";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -884,6 +890,129 @@ CommandContext createCommandContext(
     return context;
 }
 
+SyncContext createSyncContext(VkDevice device) {
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    SyncContext context{};
+    if (vkCreateSemaphore(
+            device,
+            &semaphoreInfo,
+            nullptr,
+            &context.imageAvailableSemaphore
+        ) != VK_SUCCESS ||
+        vkCreateSemaphore(
+            device,
+            &semaphoreInfo,
+            nullptr,
+            &context.renderFinishedSemaphore
+        ) != VK_SUCCESS ||
+        vkCreateFence(
+            device,
+            &fenceInfo,
+            nullptr,
+            &context.inFlightFence
+        ) != VK_SUCCESS) {
+        if (context.inFlightFence != VK_NULL_HANDLE) {
+            vkDestroyFence(device, context.inFlightFence, nullptr);
+        }
+        if (context.renderFinishedSemaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device, context.renderFinishedSemaphore, nullptr);
+        }
+        if (context.imageAvailableSemaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device, context.imageAvailableSemaphore, nullptr);
+        }
+        throw std::runtime_error("Failed to create synchronization objects.");
+    }
+
+    std::cout << "Created synchronization objects.\n";
+    return context;
+}
+
+void drawFrame(
+    const DeviceContext& deviceContext,
+    const SwapChainContext& swapChainContext,
+    const CommandContext& commandContext,
+    const SyncContext& syncContext
+) {
+    vkWaitForFences(
+        deviceContext.device,
+        1,
+        &syncContext.inFlightFence,
+        VK_TRUE,
+        std::numeric_limits<uint64_t>::max()
+    );
+
+    uint32_t imageIndex = 0;
+    VkResult acquireResult = vkAcquireNextImageKHR(
+        deviceContext.device,
+        swapChainContext.swapChain,
+        std::numeric_limits<uint64_t>::max(),
+        syncContext.imageAvailableSemaphore,
+        VK_NULL_HANDLE,
+        &imageIndex
+    );
+
+    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
+        throw std::runtime_error("Failed to acquire swap chain image.");
+    }
+
+    vkResetFences(deviceContext.device, 1, &syncContext.inFlightFence);
+
+    VkSemaphore waitSemaphores[] = {
+        syncContext.imageAvailableSemaphore,
+    };
+    VkPipelineStageFlags waitStages[] = {
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    };
+    VkSemaphore signalSemaphores[] = {
+        syncContext.renderFinishedSemaphore,
+    };
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandContext.buffers[imageIndex];
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(
+            deviceContext.graphicsQueue,
+            1,
+            &submitInfo,
+            syncContext.inFlightFence
+        ) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to submit draw command buffer.");
+    }
+
+    VkSwapchainKHR swapChains[] = {
+        swapChainContext.swapChain,
+    };
+
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &imageIndex;
+
+    VkResult presentResult = vkQueuePresentKHR(
+        deviceContext.presentQueue,
+        &presentInfo
+    );
+    if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR) {
+        throw std::runtime_error("Failed to present swap chain image.");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -902,7 +1031,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 11",
+            "Vulkan Lesson 12",
             nullptr,
             nullptr
         );
@@ -944,11 +1073,30 @@ int main() {
             renderPass,
             graphicsPipeline
         );
+        SyncContext syncContext = createSyncContext(deviceContext.device);
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+            drawFrame(
+                deviceContext,
+                swapChainContext,
+                commandContext,
+                syncContext
+            );
         }
 
+        vkDeviceWaitIdle(deviceContext.device);
+        vkDestroyFence(deviceContext.device, syncContext.inFlightFence, nullptr);
+        vkDestroySemaphore(
+            deviceContext.device,
+            syncContext.renderFinishedSemaphore,
+            nullptr
+        );
+        vkDestroySemaphore(
+            deviceContext.device,
+            syncContext.imageAvailableSemaphore,
+            nullptr
+        );
         vkDestroyCommandPool(deviceContext.device, commandContext.pool, nullptr);
         for (VkFramebuffer framebuffer : swapChainContext.framebuffers) {
             vkDestroyFramebuffer(deviceContext.device, framebuffer, nullptr);
