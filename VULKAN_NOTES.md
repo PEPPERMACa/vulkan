@@ -366,8 +366,13 @@ safe order of work.
 Current synchronization objects:
 
 - `imageAvailableSemaphore`: rendering waits until the swapchain image is ready.
-- `renderFinishedSemaphore`: presentation waits until rendering is finished.
+- `renderFinishedSemaphores[imageIndex]`: presentation waits until rendering is
+  finished for a specific swapchain image.
 - `inFlightFence`: the CPU waits until the previous submitted frame is done.
+
+The render-finished semaphore is stored per swapchain image. Presentation may
+still be using the semaphore from the last time that image was presented, so we
+avoid reusing that binary semaphore for a different image.
 
 One frame now follows this order:
 
@@ -380,11 +385,11 @@ Reset fence
         |
 Submit commandBuffer[imageIndex]
     waits on imageAvailableSemaphore
-    signals renderFinishedSemaphore
+    signals renderFinishedSemaphores[imageIndex]
     signals inFlightFence when complete
         |
 Present image
-    waits on renderFinishedSemaphore
+    waits on renderFinishedSemaphores[imageIndex]
 ```
 
 The fence is created in the signaled state so the first frame can start without

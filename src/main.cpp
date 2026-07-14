@@ -67,7 +67,7 @@ struct CommandContext {
 
 struct SyncContext {
     VkSemaphore imageAvailableSemaphore = VK_NULL_HANDLE;
-    VkSemaphore renderFinishedSemaphore = VK_NULL_HANDLE;
+    std::vector<VkSemaphore> renderFinishedSemaphores;
     VkFence inFlightFence = VK_NULL_HANDLE;
 };
 
@@ -985,7 +985,7 @@ CommandContext createCommandContext(
     return context;
 }
 
-SyncContext createSyncContext(VkDevice device) {
+SyncContext createSyncContext(VkDevice device, size_t swapChainImageCount) {
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
@@ -994,17 +994,13 @@ SyncContext createSyncContext(VkDevice device) {
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
     SyncContext context{};
+    context.renderFinishedSemaphores.resize(swapChainImageCount);
+
     if (vkCreateSemaphore(
             device,
             &semaphoreInfo,
             nullptr,
             &context.imageAvailableSemaphore
-        ) != VK_SUCCESS ||
-        vkCreateSemaphore(
-            device,
-            &semaphoreInfo,
-            nullptr,
-            &context.renderFinishedSemaphore
         ) != VK_SUCCESS ||
         vkCreateFence(
             device,
@@ -1015,13 +1011,28 @@ SyncContext createSyncContext(VkDevice device) {
         if (context.inFlightFence != VK_NULL_HANDLE) {
             vkDestroyFence(device, context.inFlightFence, nullptr);
         }
-        if (context.renderFinishedSemaphore != VK_NULL_HANDLE) {
-            vkDestroySemaphore(device, context.renderFinishedSemaphore, nullptr);
-        }
         if (context.imageAvailableSemaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(device, context.imageAvailableSemaphore, nullptr);
         }
         throw std::runtime_error("Failed to create synchronization objects.");
+    }
+
+    for (size_t i = 0; i < context.renderFinishedSemaphores.size(); ++i) {
+        if (vkCreateSemaphore(
+                device,
+                &semaphoreInfo,
+                nullptr,
+                &context.renderFinishedSemaphores[i]
+            ) != VK_SUCCESS) {
+            for (VkSemaphore semaphore : context.renderFinishedSemaphores) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    vkDestroySemaphore(device, semaphore, nullptr);
+                }
+            }
+            vkDestroyFence(device, context.inFlightFence, nullptr);
+            vkDestroySemaphore(device, context.imageAvailableSemaphore, nullptr);
+            throw std::runtime_error("Failed to create synchronization objects.");
+        }
     }
 
     std::cout << "Created synchronization objects.\n";
@@ -1065,7 +1076,7 @@ void drawFrame(
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     };
     VkSemaphore signalSemaphores[] = {
-        syncContext.renderFinishedSemaphore,
+        syncContext.renderFinishedSemaphores[imageIndex],
     };
 
     VkSubmitInfo submitInfo{};
@@ -1169,7 +1180,10 @@ int main() {
             renderPass,
             graphicsPipeline
         );
-        SyncContext syncContext = createSyncContext(deviceContext.device);
+        SyncContext syncContext = createSyncContext(
+            deviceContext.device,
+            swapChainContext.images.size()
+        );
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -1183,11 +1197,9 @@ int main() {
 
         vkDeviceWaitIdle(deviceContext.device);
         vkDestroyFence(deviceContext.device, syncContext.inFlightFence, nullptr);
-        vkDestroySemaphore(
-            deviceContext.device,
-            syncContext.renderFinishedSemaphore,
-            nullptr
-        );
+        for (VkSemaphore semaphore : syncContext.renderFinishedSemaphores) {
+            vkDestroySemaphore(deviceContext.device, semaphore, nullptr);
+        }
         vkDestroySemaphore(
             deviceContext.device,
             syncContext.imageAvailableSemaphore,
