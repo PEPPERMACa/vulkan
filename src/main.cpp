@@ -16,6 +16,7 @@ namespace {
 
 constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
+constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
 const std::vector<const char*> kDeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -70,6 +71,23 @@ struct SyncContext {
     VkFence inFlightFence = VK_NULL_HANDLE;
 };
 
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT,
+    const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
+    void*
+) {
+    const char* severity = "INFO";
+    if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        severity = "ERROR";
+    } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        severity = "WARNING";
+    }
+
+    std::cerr << "[Vulkan " << severity << "] " << callbackData->pMessage << '\n';
+    return VK_FALSE;
+}
+
 std::vector<const char*> getRequiredExtensions() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -107,18 +125,70 @@ bool isValidationLayerAvailable(const char* layerName) {
     return false;
 }
 
-VkInstance createInstance() {
-    constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
+bool shouldEnableValidationLayer() {
+    return isValidationLayerAvailable(kValidationLayer);
+}
 
+void populateDebugMessengerCreateInfo(
+    VkDebugUtilsMessengerCreateInfoEXT& createInfo
+) {
+    createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    createInfo.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    createInfo.messageType =
+        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    createInfo.pfnUserCallback = debugCallback;
+}
+
+VkResult createDebugUtilsMessengerEXT(
+    VkInstance instance,
+    const VkDebugUtilsMessengerCreateInfoEXT* createInfo,
+    const VkAllocationCallbacks* allocator,
+    VkDebugUtilsMessengerEXT* debugMessenger
+) {
+    auto function = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT")
+    );
+
+    if (function == nullptr) {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+
+    return function(instance, createInfo, allocator, debugMessenger);
+}
+
+void destroyDebugUtilsMessengerEXT(
+    VkInstance instance,
+    VkDebugUtilsMessengerEXT debugMessenger,
+    const VkAllocationCallbacks* allocator
+) {
+    auto function = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT")
+    );
+
+    if (function != nullptr) {
+        function(instance, debugMessenger, allocator);
+    }
+}
+
+VkInstance createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 12";
+    appInfo.pApplicationName = "testApp";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
+    const bool enableValidationLayer = shouldEnableValidationLayer();
     auto extensions = getRequiredExtensions();
+    if (enableValidationLayer) {
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -131,10 +201,13 @@ VkInstance createInstance() {
 #endif
 
     std::vector<const char*> validationLayers;
-    if (isValidationLayerAvailable(kValidationLayer)) {
+    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
+    if (enableValidationLayer) {
         validationLayers.push_back(kValidationLayer);
         createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
         createInfo.ppEnabledLayerNames = validationLayers.data();
+        populateDebugMessengerCreateInfo(debugCreateInfo);
+        createInfo.pNext = &debugCreateInfo;
     }
 
     VkInstance instance = VK_NULL_HANDLE;
@@ -155,6 +228,28 @@ VkInstance createInstance() {
     }
 
     return instance;
+}
+
+VkDebugUtilsMessengerEXT createDebugMessenger(VkInstance instance) {
+    if (!shouldEnableValidationLayer()) {
+        return VK_NULL_HANDLE;
+    }
+
+    VkDebugUtilsMessengerCreateInfoEXT createInfo{};
+    populateDebugMessengerCreateInfo(createInfo);
+
+    VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
+    if (createDebugUtilsMessengerEXT(
+            instance,
+            &createInfo,
+            nullptr,
+            &debugMessenger
+        ) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to set up debug messenger.");
+    }
+
+    std::cout << "Created debug messenger.\n";
+    return debugMessenger;
 }
 
 VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window) {
@@ -1031,7 +1126,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 12",
+            "testapp",
             nullptr,
             nullptr
         );
@@ -1041,6 +1136,7 @@ int main() {
         }
 
         VkInstance instance = createInstance();
+        VkDebugUtilsMessengerEXT debugMessenger = createDebugMessenger(instance);
         VkSurfaceKHR surface = createSurface(instance, window);
         VkPhysicalDevice physicalDevice = pickPhysicalDevice(instance, surface);
         DeviceContext deviceContext = createLogicalDevice(physicalDevice, surface);
@@ -1110,6 +1206,9 @@ int main() {
         vkDestroySwapchainKHR(deviceContext.device, swapChainContext.swapChain, nullptr);
         vkDestroyDevice(deviceContext.device, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
+        if (debugMessenger != VK_NULL_HANDLE) {
+            destroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+        }
         vkDestroyInstance(instance, nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();

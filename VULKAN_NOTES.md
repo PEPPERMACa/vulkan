@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 12.
+The code is currently at Lesson 13.
 
 Lessons completed:
 
@@ -26,6 +26,7 @@ Lessons completed:
 10. Framebuffers
 11. Command pool and command buffers
 12. Synchronization, submit, and present
+13. Validation debug messenger
 
 Current state:
 
@@ -53,6 +54,8 @@ Current state:
 [DONE] Synchronize, submit, and present
           |
 [DONE] Visible triangle
+          |
+[DONE] Validation debug messenger
 ```
 
 The app now acquires a swapchain image, submits the matching command buffer to
@@ -93,6 +96,29 @@ Vulkan calls and reports problems such as:
 - Unsupported features or extensions
 
 It reports mistakes but does not fix them. It is mainly used during development.
+
+The debug messenger is the callback path for validation output. Enabling
+`VK_LAYER_KHRONOS_validation` asks Vulkan to check our API usage. Enabling
+`VK_EXT_debug_utils` and creating a `VkDebugUtilsMessengerEXT` gives the layer a
+callback function where it can send messages.
+
+Current debug flow:
+
+```text
+Validation layer sees a warning/error
+        |
+        v
+VkDebugUtilsMessengerEXT
+        |
+        v
+debugCallback(...)
+        |
+        v
+std::cerr
+```
+
+The debug messenger is an instance-level object, so it is created after
+`vkCreateInstance` and destroyed before `vkDestroyInstance`.
 
 ## Surface
 
@@ -610,3 +636,22 @@ vkQueuePresentKHR
 
 Lesson 12 is the first lesson where the recorded command buffer is executed and
 the rendered swapchain image is presented to the window.
+
+### 10. Lesson 13 Debug Messenger
+
+```text
+VK_LAYER_KHRONOS_validation
+    checks Vulkan calls
+        |
+        v
+VK_EXT_debug_utils
+    exposes debug messenger functions
+        |
+        v
+VkDebugUtilsMessengerEXT
+    routes messages to debugCallback
+```
+
+Lesson 13 improves visibility into Vulkan mistakes. It does not change rendering
+output, but it gives validation warnings and errors a clear path into the
+terminal.
