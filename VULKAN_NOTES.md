@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 13.
+The code is currently at Lesson 14.
 
 Lessons completed:
 
@@ -27,6 +27,7 @@ Lessons completed:
 11. Command pool and command buffers
 12. Synchronization, submit, and present
 13. Validation debug messenger
+14. Swapchain recreation
 
 Current state:
 
@@ -56,6 +57,8 @@ Current state:
 [DONE] Visible triangle
           |
 [DONE] Validation debug messenger
+          |
+[DONE] Swapchain recreation
 ```
 
 The app now acquires a swapchain image, submits the matching command buffer to
@@ -396,6 +399,56 @@ The fence is created in the signaled state so the first frame can start without
 waiting forever. After that, each submission signals the fence when the GPU has
 finished the submitted work.
 
+## Swapchain Recreation
+
+The swapchain depends on the window surface. If the window changes size, is
+minimized, or the presentation system reports that the swapchain is out of
+date, we must rebuild the swapchain and the objects that depend on its images
+or extent.
+
+Swapchain-dependent objects in the current app:
+
+- Swapchain images
+- Image views
+- Render pass
+- Graphics pipeline, because the viewport and scissor use the swapchain extent
+- Framebuffers
+- Command buffers, because they record a framebuffer for each swapchain image
+- Render-finished semaphores, because we keep one per swapchain image
+
+The render loop requests recreation when:
+
+- `vkAcquireNextImageKHR` returns `VK_ERROR_OUT_OF_DATE_KHR`.
+- `vkQueuePresentKHR` returns `VK_ERROR_OUT_OF_DATE_KHR`.
+- `vkQueuePresentKHR` returns `VK_SUBOPTIMAL_KHR`.
+- The GLFW framebuffer resize callback marks the framebuffer as resized.
+
+When the window is minimized, the framebuffer size can become `0x0`. In that
+case, recreation waits for a non-zero framebuffer size before building a new
+swapchain.
+
+Recreation flow:
+
+```text
+Wait until the device is idle
+        |
+Destroy sync objects
+Destroy command pool and command buffers
+Destroy framebuffers
+Destroy graphics pipeline
+Destroy render pass
+Destroy image views
+Destroy old swapchain
+        |
+Create swapchain again
+Create image views again
+Create render pass again
+Create graphics pipeline again
+Create framebuffers again
+Record command buffers again
+Create sync objects again
+```
+
 ## How the Pieces Connect
 
 ```text
@@ -660,3 +713,25 @@ VkDebugUtilsMessengerEXT
 Lesson 13 improves visibility into Vulkan mistakes. It does not change rendering
 output, but it gives validation warnings and errors a clear path into the
 terminal.
+
+### 11. Lesson 14 Swapchain Recreation
+
+```text
+Window resize or swapchain out of date
+        |
+        v
+Wait for device idle
+        |
+        v
+Destroy old swapchain-dependent resources
+        |
+        v
+Create new swapchain-dependent resources
+        |
+        v
+Continue drawing
+```
+
+Lesson 14 makes the app resilient to surface changes. The triangle should keep
+rendering after the window is resized or after the swapchain reports that it
+needs to be replaced.

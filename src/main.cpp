@@ -71,6 +71,15 @@ struct SyncContext {
     VkFence inFlightFence = VK_NULL_HANDLE;
 };
 
+void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+    auto* framebufferResized = static_cast<bool*>(glfwGetWindowUserPointer(window));
+    if (framebufferResized != nullptr) {
+        *framebufferResized = true;
+    }
+
+    std::cout << "Framebuffer resized: " << width << "x" << height << '\n';
+}
+
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT,
@@ -178,7 +187,7 @@ void destroyDebugUtilsMessengerEXT(
 VkInstance createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "testApp";
+    appInfo.pApplicationName = "Vulkan Lesson 14";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -1039,11 +1048,141 @@ SyncContext createSyncContext(VkDevice device, size_t swapChainImageCount) {
     return context;
 }
 
-void drawFrame(
+void destroySyncContext(VkDevice device, const SyncContext& syncContext) {
+    if (syncContext.inFlightFence != VK_NULL_HANDLE) {
+        vkDestroyFence(device, syncContext.inFlightFence, nullptr);
+    }
+
+    for (VkSemaphore semaphore : syncContext.renderFinishedSemaphores) {
+        if (semaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device, semaphore, nullptr);
+        }
+    }
+
+    if (syncContext.imageAvailableSemaphore != VK_NULL_HANDLE) {
+        vkDestroySemaphore(device, syncContext.imageAvailableSemaphore, nullptr);
+    }
+}
+
+void destroySwapChainResources(
+    VkDevice device,
+    SwapChainContext& swapChainContext,
+    VkRenderPass& renderPass,
+    GraphicsPipelineContext& graphicsPipeline,
+    CommandContext& commandContext
+) {
+    if (commandContext.pool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(device, commandContext.pool, nullptr);
+        commandContext.pool = VK_NULL_HANDLE;
+        commandContext.buffers.clear();
+    }
+
+    for (VkFramebuffer framebuffer : swapChainContext.framebuffers) {
+        vkDestroyFramebuffer(device, framebuffer, nullptr);
+    }
+    swapChainContext.framebuffers.clear();
+
+    if (graphicsPipeline.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, graphicsPipeline.pipeline, nullptr);
+        graphicsPipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (graphicsPipeline.layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, graphicsPipeline.layout, nullptr);
+        graphicsPipeline.layout = VK_NULL_HANDLE;
+    }
+
+    if (renderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device, renderPass, nullptr);
+        renderPass = VK_NULL_HANDLE;
+    }
+
+    for (VkImageView imageView : swapChainContext.imageViews) {
+        vkDestroyImageView(device, imageView, nullptr);
+    }
+    swapChainContext.imageViews.clear();
+
+    if (swapChainContext.swapChain != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device, swapChainContext.swapChain, nullptr);
+        swapChainContext.swapChain = VK_NULL_HANDLE;
+    }
+    swapChainContext.images.clear();
+}
+
+void rebuildSwapChainResources(
+    VkPhysicalDevice physicalDevice,
+    const DeviceContext& deviceContext,
+    VkSurfaceKHR surface,
+    GLFWwindow* window,
+    SwapChainContext& swapChainContext,
+    VkRenderPass& renderPass,
+    GraphicsPipelineContext& graphicsPipeline,
+    CommandContext& commandContext,
+    SyncContext& syncContext
+) {
+    int width = 0;
+    int height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    while (width == 0 || height == 0) {
+        glfwWaitEvents();
+        glfwGetFramebufferSize(window, &width, &height);
+    }
+
+    std::cout << "Rebuilding swap chain for framebuffer size: "
+              << width << "x" << height << '\n';
+
+    vkDeviceWaitIdle(deviceContext.device);
+    destroySyncContext(deviceContext.device, syncContext);
+    destroySwapChainResources(
+        deviceContext.device,
+        swapChainContext,
+        renderPass,
+        graphicsPipeline,
+        commandContext
+    );
+
+    swapChainContext = createSwapChain(
+        physicalDevice,
+        deviceContext,
+        surface,
+        window
+    );
+    createImageViews(deviceContext.device, swapChainContext);
+    renderPass = createRenderPass(
+        deviceContext.device,
+        swapChainContext.imageFormat
+    );
+    graphicsPipeline = createGraphicsPipeline(
+        deviceContext.device,
+        swapChainContext.extent,
+        renderPass
+    );
+    createFramebuffers(
+        deviceContext.device,
+        swapChainContext,
+        renderPass
+    );
+    commandContext = createCommandContext(
+        deviceContext.device,
+        physicalDevice,
+        surface,
+        swapChainContext,
+        renderPass,
+        graphicsPipeline
+    );
+    syncContext = createSyncContext(
+        deviceContext.device,
+        swapChainContext.images.size()
+    );
+
+    std::cout << "Finished swap chain rebuild.\n";
+}
+
+bool drawFrame(
     const DeviceContext& deviceContext,
     const SwapChainContext& swapChainContext,
     const CommandContext& commandContext,
-    const SyncContext& syncContext
+    const SyncContext& syncContext,
+    bool& framebufferResized
 ) {
     vkWaitForFences(
         deviceContext.device,
@@ -1062,6 +1201,10 @@ void drawFrame(
         VK_NULL_HANDLE,
         &imageIndex
     );
+
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+        return true;
+    }
 
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("Failed to acquire swap chain image.");
@@ -1114,9 +1257,21 @@ void drawFrame(
         deviceContext.presentQueue,
         &presentInfo
     );
+
+    if (
+        presentResult == VK_ERROR_OUT_OF_DATE_KHR ||
+        presentResult == VK_SUBOPTIMAL_KHR ||
+        framebufferResized
+    ) {
+        framebufferResized = false;
+        return true;
+    }
+
     if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("Failed to present swap chain image.");
     }
+
+    return false;
 }
 
 } // namespace
@@ -1132,12 +1287,12 @@ int main() {
         }
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "testapp",
+            "Vulkan Lesson 14",
             nullptr,
             nullptr
         );
@@ -1145,6 +1300,10 @@ int main() {
         if (window == nullptr) {
             throw std::runtime_error("Failed to create GLFW window.");
         }
+
+        bool framebufferResized = false;
+        glfwSetWindowUserPointer(window, &framebufferResized);
+        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 
         VkInstance instance = createInstance();
         VkDebugUtilsMessengerEXT debugMessenger = createDebugMessenger(instance);
@@ -1187,35 +1346,37 @@ int main() {
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
-            drawFrame(
+            const bool shouldRebuildSwapChain = drawFrame(
                 deviceContext,
                 swapChainContext,
                 commandContext,
-                syncContext
+                syncContext,
+                framebufferResized
             );
+            if (shouldRebuildSwapChain) {
+                rebuildSwapChainResources(
+                    physicalDevice,
+                    deviceContext,
+                    surface,
+                    window,
+                    swapChainContext,
+                    renderPass,
+                    graphicsPipeline,
+                    commandContext,
+                    syncContext
+                );
+            }
         }
 
         vkDeviceWaitIdle(deviceContext.device);
-        vkDestroyFence(deviceContext.device, syncContext.inFlightFence, nullptr);
-        for (VkSemaphore semaphore : syncContext.renderFinishedSemaphores) {
-            vkDestroySemaphore(deviceContext.device, semaphore, nullptr);
-        }
-        vkDestroySemaphore(
+        destroySyncContext(deviceContext.device, syncContext);
+        destroySwapChainResources(
             deviceContext.device,
-            syncContext.imageAvailableSemaphore,
-            nullptr
+            swapChainContext,
+            renderPass,
+            graphicsPipeline,
+            commandContext
         );
-        vkDestroyCommandPool(deviceContext.device, commandContext.pool, nullptr);
-        for (VkFramebuffer framebuffer : swapChainContext.framebuffers) {
-            vkDestroyFramebuffer(deviceContext.device, framebuffer, nullptr);
-        }
-        vkDestroyPipeline(deviceContext.device, graphicsPipeline.pipeline, nullptr);
-        vkDestroyPipelineLayout(deviceContext.device, graphicsPipeline.layout, nullptr);
-        vkDestroyRenderPass(deviceContext.device, renderPass, nullptr);
-        for (VkImageView imageView : swapChainContext.imageViews) {
-            vkDestroyImageView(deviceContext.device, imageView, nullptr);
-        }
-        vkDestroySwapchainKHR(deviceContext.device, swapChainContext.swapChain, nullptr);
         vkDestroyDevice(deviceContext.device, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         if (debugMessenger != VK_NULL_HANDLE) {
