@@ -1,6 +1,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <array>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -23,6 +25,17 @@ const std::vector<const char*> kDeviceExtensions = {
 #ifdef __APPLE__
     "VK_KHR_portability_subset",
 #endif
+};
+
+struct Vertex {
+    float position[2];
+    float color[3];
+};
+
+const std::vector<Vertex> kVertices = {
+    {{0.0F, -0.5F}, {1.0F, 0.0F, 0.0F}},
+    {{0.5F, 0.5F}, {0.0F, 1.0F, 0.0F}},
+    {{-0.5F, 0.5F}, {0.0F, 0.0F, 1.0F}},
 };
 
 struct QueueFamilyIndices {
@@ -63,6 +76,11 @@ struct GraphicsPipelineContext {
 struct CommandContext {
     VkCommandPool pool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> buffers;
+};
+
+struct VertexBufferContext {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
 };
 
 struct SyncContext {
@@ -187,7 +205,7 @@ void destroyDebugUtilsMessengerEXT(
 VkInstance createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 14";
+    appInfo.pApplicationName = "Vulkan Lesson 15";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -649,7 +667,7 @@ void createImageViews(VkDevice device, SwapChainContext& swapChainContext) {
 VkRenderPass createRenderPass(VkDevice device, VkFormat swapChainImageFormat) {
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = swapChainImageFormat;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;    // No multisampling for now, which makes the edge aliasing look jagged.
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -723,6 +741,31 @@ VkShaderModule createShaderModule(
     return shaderModule;
 }
 
+VkVertexInputBindingDescription getVertexBindingDescription() {
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(Vertex);
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    return bindingDescription;
+}
+
+std::array<VkVertexInputAttributeDescription, 2> getVertexAttributeDescriptions() {
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(Vertex, position);
+
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+    return attributeDescriptions;
+}
+
 GraphicsPipelineContext createGraphicsPipeline(
     VkDevice device,
     VkExtent2D swapChainExtent,
@@ -760,6 +803,13 @@ GraphicsPipelineContext createGraphicsPipeline(
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType =
         VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    const auto bindingDescription = getVertexBindingDescription();
+    const auto attributeDescriptions = getVertexAttributeDescriptions();
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount =
+        static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType =
@@ -909,13 +959,120 @@ void createFramebuffers(
               << swapChainContext.framebuffers.size() << '\n';
 }
 
+uint32_t findMemoryType(
+    VkPhysicalDevice physicalDevice,
+    uint32_t typeFilter,
+    VkMemoryPropertyFlags properties
+) {
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
+
+    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
+        const bool typeMatches = (typeFilter & (1 << i)) != 0;
+        const bool propertiesMatch =
+            (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
+
+        if (typeMatches && propertiesMatch) {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("Failed to find suitable memory type.");
+}
+
+VertexBufferContext createVertexBuffer(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device
+) {
+    VkDeviceSize bufferSize = sizeof(kVertices[0]) * kVertices.size();
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = bufferSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VertexBufferContext context{};
+    if (vkCreateBuffer(
+            device,
+            &bufferInfo,
+            nullptr,
+            &context.buffer
+        ) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create vertex buffer.");
+    }
+
+    VkMemoryRequirements memoryRequirements{};
+    vkGetBufferMemoryRequirements(device, context.buffer, &memoryRequirements);
+
+    VkMemoryAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize = memoryRequirements.size;
+    allocateInfo.memoryTypeIndex = findMemoryType(
+        physicalDevice,
+        memoryRequirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+    );
+
+    if (vkAllocateMemory(
+            device,
+            &allocateInfo,
+            nullptr,
+            &context.memory
+        ) != VK_SUCCESS) {
+        vkDestroyBuffer(device, context.buffer, nullptr);
+        throw std::runtime_error("Failed to allocate vertex buffer memory.");
+    }
+
+    if (vkBindBufferMemory(
+            device,
+            context.buffer,
+            context.memory,
+            0
+        ) != VK_SUCCESS) {
+        vkDestroyBuffer(device, context.buffer, nullptr);
+        vkFreeMemory(device, context.memory, nullptr);
+        throw std::runtime_error("Failed to bind vertex buffer memory.");
+    }
+
+    void* data = nullptr;
+    if (vkMapMemory(
+            device,
+            context.memory,
+            0,
+            bufferSize,
+            0,
+            &data
+        ) != VK_SUCCESS) {
+        vkDestroyBuffer(device, context.buffer, nullptr);
+        vkFreeMemory(device, context.memory, nullptr);
+        throw std::runtime_error("Failed to map vertex buffer memory.");
+    }
+    std::memcpy(data, kVertices.data(), static_cast<size_t>(bufferSize));
+    vkUnmapMemory(device, context.memory);
+
+    std::cout << "Created vertex buffer.\n";
+    return context;
+}
+
+void destroyVertexBuffer(VkDevice device, const VertexBufferContext& vertexBuffer) {
+    if (vertexBuffer.buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, vertexBuffer.buffer, nullptr);
+    }
+
+    if (vertexBuffer.memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, vertexBuffer.memory, nullptr);
+    }
+}
+
 CommandContext createCommandContext(
     VkDevice device,
     VkPhysicalDevice physicalDevice,
     VkSurfaceKHR surface,
     const SwapChainContext& swapChainContext,
     VkRenderPass renderPass,
-    const GraphicsPipelineContext& graphicsPipeline
+    const GraphicsPipelineContext& graphicsPipeline,
+    const VertexBufferContext& vertexBuffer
 ) {
     QueueFamilyIndices queueFamilyIndices = findQueueFamilies(
         physicalDevice,
@@ -981,7 +1138,21 @@ CommandContext createCommandContext(
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             graphicsPipeline.pipeline
         );
-        vkCmdDraw(context.buffers[i], 3, 1, 0, 0);
+
+        VkBuffer vertexBuffers[] = {
+            vertexBuffer.buffer,
+        };
+        VkDeviceSize offsets[] = {
+            0,
+        };
+        vkCmdBindVertexBuffers(context.buffers[i], 0, 1, vertexBuffers, offsets);
+        vkCmdDraw(
+            context.buffers[i],
+            static_cast<uint32_t>(kVertices.size()),
+            1,
+            0,
+            0
+        );
         vkCmdEndRenderPass(context.buffers[i]);
 
         if (vkEndCommandBuffer(context.buffers[i]) != VK_SUCCESS) {
@@ -1117,6 +1288,7 @@ void rebuildSwapChainResources(
     VkRenderPass& renderPass,
     GraphicsPipelineContext& graphicsPipeline,
     CommandContext& commandContext,
+    const VertexBufferContext& vertexBuffer,
     SyncContext& syncContext
 ) {
     int width = 0;
@@ -1167,7 +1339,8 @@ void rebuildSwapChainResources(
         surface,
         swapChainContext,
         renderPass,
-        graphicsPipeline
+        graphicsPipeline,
+        vertexBuffer
     );
     syncContext = createSyncContext(
         deviceContext.device,
@@ -1292,7 +1465,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 14",
+            "Vulkan Lesson 15",
             nullptr,
             nullptr
         );
@@ -1331,13 +1504,18 @@ int main() {
             swapChainContext,
             renderPass
         );
+        VertexBufferContext vertexBuffer = createVertexBuffer(
+            physicalDevice,
+            deviceContext.device
+        );
         CommandContext commandContext = createCommandContext(
             deviceContext.device,
             physicalDevice,
             surface,
             swapChainContext,
             renderPass,
-            graphicsPipeline
+            graphicsPipeline,
+            vertexBuffer
         );
         SyncContext syncContext = createSyncContext(
             deviceContext.device,
@@ -1363,6 +1541,7 @@ int main() {
                     renderPass,
                     graphicsPipeline,
                     commandContext,
+                    vertexBuffer,
                     syncContext
                 );
             }
@@ -1377,6 +1556,7 @@ int main() {
             graphicsPipeline,
             commandContext
         );
+        destroyVertexBuffer(deviceContext.device, vertexBuffer);
         vkDestroyDevice(deviceContext.device, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         if (debugMessenger != VK_NULL_HANDLE) {

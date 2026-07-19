@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 14.
+The code is currently at Lesson 15.
 
 Lessons completed:
 
@@ -28,6 +28,7 @@ Lessons completed:
 12. Synchronization, submit, and present
 13. Validation debug messenger
 14. Swapchain recreation
+15. Vertex buffer
 
 Current state:
 
@@ -59,11 +60,14 @@ Current state:
 [DONE] Validation debug messenger
           |
 [DONE] Swapchain recreation
+          |
+[DONE] Vertex buffer
 ```
 
 The app now acquires a swapchain image, submits the matching command buffer to
-the graphics queue, and presents the rendered image. This is the first point
-where the triangle should appear on screen.
+the graphics queue, and presents the rendered image. The triangle's position
+and color data now comes from a Vulkan vertex buffer instead of hardcoded
+arrays inside the vertex shader.
 
 ## GLFW
 
@@ -258,13 +262,12 @@ A `VkShaderModule` is a Vulkan object created from SPIR-V bytes. It means:
 A shader module does not draw anything by itself. The graphics pipeline says
 which stage uses the module, and which entry function to run.
 
-Our vertex shader runs once for each of the triangle's three vertices. It uses
-`gl_VertexIndex` to select a position and color:
+Our vertex shader runs once for each of the triangle's three vertices. It now
+receives position and color from the bound vertex buffer:
 
 ```text
-Vertex 0 -> position 0 + red
-Vertex 1 -> position 1 + green
-Vertex 2 -> position 2 + blue
+layout(location = 0) in vec2 inPosition
+layout(location = 1) in vec3 inColor
 ```
 
 Our fragment shader runs for the generated fragments, which roughly correspond
@@ -302,8 +305,7 @@ Color blending: write colors to the attachment
 The current graphics pipeline includes:
 
 - Shader stages: one vertex shader and one fragment shader.
-- Vertex input: empty, because the triangle data is hardcoded in the vertex
-  shader instead of coming from a vertex buffer.
+- Vertex input: describes one binding with position and color attributes.
 - Input assembly: groups every three vertices into a triangle.
 - Viewport: maps rendering into the swapchain extent.
 - Scissor: limits rendering to the swapchain rectangle.
@@ -315,9 +317,9 @@ The current graphics pipeline includes:
 - Render pass compatibility: the pipeline is built for subpass `0` of the
   current render pass.
 
-The pipeline layout describes resources shaders may access. It is empty for
-this lesson because our shader positions and colors are written directly into
-the shader source.
+The pipeline layout describes resources shaders may access through descriptors
+or push constants. It is still empty because vertex buffers are bound through
+the command buffer, not through the pipeline layout.
 
 Creating a pipeline does not draw anything. A future command buffer must bind
 the pipeline and issue `vkCmdDraw`.
@@ -345,6 +347,7 @@ framebuffer:
 Begin command buffer
     Begin render pass for framebuffer[i]
         Bind graphics pipeline
+        Bind vertex buffer
         Draw 3 vertices
     End render pass
 End command buffer
@@ -357,8 +360,41 @@ The `vkCmdDraw(commandBuffer, 3, 1, 0, 0)` call means:
 - Start at vertex index 0.
 - Start at instance index 0.
 
-The vertex shader uses `gl_VertexIndex` values `0`, `1`, and `2` to choose the
-three hardcoded triangle positions and colors.
+The vertex shader receives each vertex's position and color from the bound
+vertex buffer.
+
+## Vertex Buffer
+
+Lesson 15 moves the triangle data from shader source code into C++:
+
+```text
+struct Vertex
+    position: 2 floats
+    color: 3 floats
+        |
+kVertices
+        |
+VkBuffer + VkDeviceMemory
+        |
+vkCmdBindVertexBuffers
+        |
+vertex shader inputs
+```
+
+The vertex buffer is a Vulkan buffer created with
+`VK_BUFFER_USAGE_VERTEX_BUFFER_BIT`. For this first version, its memory is
+`HOST_VISIBLE` and `HOST_COHERENT`, which means the CPU can map it and copy the
+three vertices directly into it.
+
+The graphics pipeline also needs to understand the layout of each vertex:
+
+- Binding `0`: one `Vertex` per vertex.
+- Location `0`: `position`, stored as `VK_FORMAT_R32G32_SFLOAT`.
+- Location `1`: `color`, stored as `VK_FORMAT_R32G32B32_SFLOAT`.
+
+The command buffer binds the vertex buffer before drawing. `vkCmdDraw` still
+draws three vertices, but those vertices now come from buffer memory instead of
+arrays inside `triangle.vert`.
 
 ## Synchronization, Submit, and Present
 
@@ -735,3 +771,21 @@ Continue drawing
 Lesson 14 makes the app resilient to surface changes. The triangle should keep
 rendering after the window is resized or after the swapchain reports that it
 needs to be replaced.
+
+### 12. Lesson 15 Vertex Buffer
+
+```text
+C++ vertex data
+        |
+        v
+VkBuffer + VkDeviceMemory
+        |
+        v
+vkCmdBindVertexBuffers
+        |
+        v
+Vertex shader location 0/1 inputs
+```
+
+Lesson 15 makes the triangle's positions and colors real vertex data owned by
+the application. The shader no longer stores the triangle arrays itself.
