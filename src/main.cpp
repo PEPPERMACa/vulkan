@@ -205,7 +205,7 @@ void destroyDebugUtilsMessengerEXT(
 VkInstance createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 15";
+    appInfo.pApplicationName = "Vulkan Lesson 16";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -980,30 +980,32 @@ uint32_t findMemoryType(
     throw std::runtime_error("Failed to find suitable memory type.");
 }
 
-VertexBufferContext createVertexBuffer(
+void createBuffer(
     VkPhysicalDevice physicalDevice,
-    VkDevice device
+    VkDevice device,
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    VkMemoryPropertyFlags properties,
+    VkBuffer& buffer,
+    VkDeviceMemory& bufferMemory
 ) {
-    VkDeviceSize bufferSize = sizeof(kVertices[0]) * kVertices.size();
-
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    VertexBufferContext context{};
     if (vkCreateBuffer(
             device,
             &bufferInfo,
             nullptr,
-            &context.buffer
+            &buffer
         ) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create vertex buffer.");
+        throw std::runtime_error("Failed to create buffer.");
     }
 
     VkMemoryRequirements memoryRequirements{};
-    vkGetBufferMemoryRequirements(device, context.buffer, &memoryRequirements);
+    vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
 
     VkMemoryAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -1011,58 +1013,173 @@ VertexBufferContext createVertexBuffer(
     allocateInfo.memoryTypeIndex = findMemoryType(
         physicalDevice,
         memoryRequirements.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+        properties
     );
 
     if (vkAllocateMemory(
             device,
             &allocateInfo,
             nullptr,
-            &context.memory
+            &bufferMemory
         ) != VK_SUCCESS) {
-        vkDestroyBuffer(device, context.buffer, nullptr);
-        throw std::runtime_error("Failed to allocate vertex buffer memory.");
+        vkDestroyBuffer(device, buffer, nullptr);
+        throw std::runtime_error("Failed to allocate buffer memory.");
     }
 
     if (vkBindBufferMemory(
             device,
-            context.buffer,
-            context.memory,
+            buffer,
+            bufferMemory,
             0
         ) != VK_SUCCESS) {
-        vkDestroyBuffer(device, context.buffer, nullptr);
-        vkFreeMemory(device, context.memory, nullptr);
-        throw std::runtime_error("Failed to bind vertex buffer memory.");
+        vkDestroyBuffer(device, buffer, nullptr);
+        vkFreeMemory(device, bufferMemory, nullptr);
+        throw std::runtime_error("Failed to bind buffer memory.");
+    }
+}
+
+void destroyBuffer(VkDevice device, const VertexBufferContext& bufferContext) {
+    if (bufferContext.buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, bufferContext.buffer, nullptr);
     }
 
-    void* data = nullptr;
-    if (vkMapMemory(
-            device,
-            context.memory,
-            0,
-            bufferSize,
-            0,
-            &data
-        ) != VK_SUCCESS) {
-        vkDestroyBuffer(device, context.buffer, nullptr);
-        vkFreeMemory(device, context.memory, nullptr);
-        throw std::runtime_error("Failed to map vertex buffer memory.");
+    if (bufferContext.memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, bufferContext.memory, nullptr);
     }
-    std::memcpy(data, kVertices.data(), static_cast<size_t>(bufferSize));
-    vkUnmapMemory(device, context.memory);
+}
+
+void copyBuffer(
+    VkDevice device,
+    VkQueue graphicsQueue,
+    uint32_t graphicsQueueFamily,
+    VkBuffer sourceBuffer,
+    VkBuffer destinationBuffer,
+    VkDeviceSize size
+) {
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    poolInfo.queueFamilyIndex = graphicsQueueFamily;
+
+    VkCommandPool commandPool = VK_NULL_HANDLE;
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create transfer command pool.");
+    }
+
+    VkCommandBufferAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocateInfo.commandPool = commandPool;
+    allocateInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffer) != VK_SUCCESS) {
+        vkDestroyCommandPool(device, commandPool, nullptr);
+        throw std::runtime_error("Failed to allocate transfer command buffer.");
+    }
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        vkDestroyCommandPool(device, commandPool, nullptr);
+        throw std::runtime_error("Failed to begin transfer command buffer.");
+    }
+
+    VkBufferCopy copyRegion{};
+    copyRegion.size = size;
+    vkCmdCopyBuffer(commandBuffer, sourceBuffer, destinationBuffer, 1, &copyRegion);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        vkDestroyCommandPool(device, commandPool, nullptr);
+        throw std::runtime_error("Failed to record transfer command buffer.");
+    }
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+        vkDestroyCommandPool(device, commandPool, nullptr);
+        throw std::runtime_error("Failed to submit transfer command buffer.");
+    }
+    vkQueueWaitIdle(graphicsQueue);
+
+    vkDestroyCommandPool(device, commandPool, nullptr);
+}
+
+VertexBufferContext createVertexBuffer(
+    VkPhysicalDevice physicalDevice,
+    const DeviceContext& deviceContext,
+    VkSurfaceKHR surface
+) {
+    VkDeviceSize bufferSize = sizeof(kVertices[0]) * kVertices.size();
+
+    VertexBufferContext stagingBuffer{};
+    createBuffer(
+        physicalDevice,
+        deviceContext.device,
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,   // source of GPU transfer, so we can copy it to the vertex buffer.
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // CPU-visible memory, so we can map it and write to it directly.
+        stagingBuffer.buffer,
+        stagingBuffer.memory
+    );
+
+    VertexBufferContext vertexBuffer{};
+    createBuffer(
+        physicalDevice,
+        deviceContext.device,
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        vertexBuffer.buffer,
+        vertexBuffer.memory
+    );
+
+    try {
+        void* data = nullptr;
+        if (vkMapMemory(
+                deviceContext.device,
+                stagingBuffer.memory,
+                0,
+                bufferSize,
+                0,
+                &data
+            ) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to map staging buffer memory.");
+        }
+        std::memcpy(data, kVertices.data(), static_cast<size_t>(bufferSize));
+        vkUnmapMemory(deviceContext.device, stagingBuffer.memory);
+
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(
+            physicalDevice,
+            surface
+        );
+        copyBuffer(
+            deviceContext.device,
+            deviceContext.graphicsQueue,
+            queueFamilyIndices.graphicsFamily.value(),
+            stagingBuffer.buffer,
+            vertexBuffer.buffer,
+            bufferSize
+        );
+    } catch (...) {
+        destroyBuffer(deviceContext.device, stagingBuffer);
+        destroyBuffer(deviceContext.device, vertexBuffer);
+        throw;
+    }
+
+    destroyBuffer(deviceContext.device, stagingBuffer);
 
     std::cout << "Created vertex buffer.\n";
-    return context;
+    return vertexBuffer;
 }
 
 void destroyVertexBuffer(VkDevice device, const VertexBufferContext& vertexBuffer) {
-    if (vertexBuffer.buffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, vertexBuffer.buffer, nullptr);
-    }
-
-    if (vertexBuffer.memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, vertexBuffer.memory, nullptr);
-    }
+    destroyBuffer(device, vertexBuffer);
 }
 
 CommandContext createCommandContext(
@@ -1465,7 +1582,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 15",
+            "Vulkan Lesson 16",
             nullptr,
             nullptr
         );
@@ -1506,7 +1623,8 @@ int main() {
         );
         VertexBufferContext vertexBuffer = createVertexBuffer(
             physicalDevice,
-            deviceContext.device
+            deviceContext,
+            surface
         );
         CommandContext commandContext = createCommandContext(
             deviceContext.device,

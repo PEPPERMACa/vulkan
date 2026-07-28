@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 15.
+The code is currently at Lesson 16.
 
 Lessons completed:
 
@@ -29,6 +29,7 @@ Lessons completed:
 13. Validation debug messenger
 14. Swapchain recreation
 15. Vertex buffer
+16. Staging buffer
 
 Current state:
 
@@ -62,12 +63,15 @@ Current state:
 [DONE] Swapchain recreation
           |
 [DONE] Vertex buffer
+          |
+[DONE] Staging buffer
 ```
 
 The app now acquires a swapchain image, submits the matching command buffer to
 the graphics queue, and presents the rendered image. The triangle's position
 and color data now comes from a Vulkan vertex buffer instead of hardcoded
-arrays inside the vertex shader.
+arrays inside the vertex shader. That vertex buffer is filled through a staging
+buffer, then copied into device-local memory.
 
 ## GLFW
 
@@ -381,10 +385,38 @@ vkCmdBindVertexBuffers
 vertex shader inputs
 ```
 
-The vertex buffer is a Vulkan buffer created with
-`VK_BUFFER_USAGE_VERTEX_BUFFER_BIT`. For this first version, its memory is
-`HOST_VISIBLE` and `HOST_COHERENT`, which means the CPU can map it and copy the
-three vertices directly into it.
+Lesson 15 introduced the idea of a vertex buffer. Lesson 16 changes how that
+buffer is filled.
+
+Instead of drawing from CPU-visible memory directly, the app now uses two
+buffers:
+
+```text
+Staging buffer
+    HOST_VISIBLE | HOST_COHERENT
+    CPU maps and writes kVertices here
+        |
+        | vkCmdCopyBuffer
+        v
+Vertex buffer
+    DEVICE_LOCAL
+    GPU reads this while drawing
+```
+
+The staging buffer is temporary. It exists only long enough for the CPU to copy
+the vertex data into it and for the GPU to copy that data into the real vertex
+buffer.
+
+The final vertex buffer is created with:
+
+```text
+VK_BUFFER_USAGE_TRANSFER_DST_BIT
+VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+```
+
+`DEVICE_LOCAL` memory is preferred for GPU access. The CPU usually cannot map it
+directly, so the staging buffer acts as the upload bridge.
 
 The graphics pipeline also needs to understand the layout of each vertex:
 
@@ -395,6 +427,17 @@ The graphics pipeline also needs to understand the layout of each vertex:
 The command buffer binds the vertex buffer before drawing. `vkCmdDraw` still
 draws three vertices, but those vertices now come from buffer memory instead of
 arrays inside `triangle.vert`.
+
+The copy itself also uses a command buffer:
+
+```text
+Begin one-time transfer command buffer
+    vkCmdCopyBuffer(stagingBuffer -> vertexBuffer)
+End command buffer
+Submit to graphics queue
+Wait for copy to finish
+Destroy staging buffer
+```
 
 ## Synchronization, Submit, and Present
 
@@ -789,3 +832,25 @@ Vertex shader location 0/1 inputs
 
 Lesson 15 makes the triangle's positions and colors real vertex data owned by
 the application. The shader no longer stores the triangle arrays itself.
+
+### 13. Lesson 16 Staging Buffer
+
+```text
+CPU writes kVertices
+        |
+        v
+HOST_VISIBLE staging buffer
+        |
+        v
+vkCmdCopyBuffer
+        |
+        v
+DEVICE_LOCAL vertex buffer
+        |
+        v
+vkCmdBindVertexBuffers
+```
+
+Lesson 16 keeps the same triangle on screen, but the final vertex buffer now
+lives in GPU-friendly device-local memory. The staging buffer is only an upload
+tool and is destroyed after the copy completes.
