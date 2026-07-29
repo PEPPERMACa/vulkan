@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(VulkanLesson16 LANGUAGES CXX)
+project(VulkanLesson17 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,13 +32,13 @@ add_custom_command(
     VERBATIM
 )
 
-add_custom_target(vulkan_lesson_16_shaders
+add_custom_target(vulkan_lesson_17_shaders
     DEPENDS
         "${SHADER_OUTPUT_DIR}/triangle.vert.spv"
         "${SHADER_OUTPUT_DIR}/triangle.frag.spv"
 )
 
-add_executable(vulkan_lesson_16
+add_executable(vulkan_lesson_17
     src/main.cpp
     shaders/triangle.vert
     shaders/triangle.frag
@@ -55,14 +55,14 @@ source_group("Shaders" FILES
     shaders/triangle.frag
 )
 
-add_dependencies(vulkan_lesson_16 vulkan_lesson_16_shaders)
+add_dependencies(vulkan_lesson_17 vulkan_lesson_17_shaders)
 
-target_compile_definitions(vulkan_lesson_16
+target_compile_definitions(vulkan_lesson_17
     PRIVATE
         SHADER_DIR="${SHADER_OUTPUT_DIR}"
 )
 
-target_link_libraries(vulkan_lesson_16
+target_link_libraries(vulkan_lesson_17
     PRIVATE
         Vulkan::Vulkan
         glfw

@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -33,9 +34,16 @@ struct Vertex {
 };
 
 const std::vector<Vertex> kVertices = {
-    {{0.0F, -0.5F}, {1.0F, 0.0F, 0.0F}},
-    {{0.5F, 0.5F}, {0.0F, 1.0F, 0.0F}},
-    {{-0.5F, 0.5F}, {0.0F, 0.0F, 1.0F}},
+    /* {position, color} */
+    {{-0.5F, -0.5F}, {1.0F, 0.0F, 0.0F}},
+    {{0.5F, -0.5F}, {0.0F, 1.0F, 0.0F}},
+    {{0.5F, 0.5F}, {0.0F, 0.0F, 1.0F}},
+    {{-0.5F, 0.5F}, {1.0F, 1.0F, 1.0F}},
+};
+
+const std::vector<uint16_t> kIndices = {
+    0, 1, 2,
+    2, 3, 0,
 };
 
 struct QueueFamilyIndices {
@@ -205,7 +213,7 @@ void destroyDebugUtilsMessengerEXT(
 VkInstance createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 16";
+    appInfo.pApplicationName = "Vulkan Lesson 17";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -1178,6 +1186,74 @@ VertexBufferContext createVertexBuffer(
     return vertexBuffer;
 }
 
+VertexBufferContext createIndexBuffer(
+    VkPhysicalDevice physicalDevice,
+    const DeviceContext& deviceContext,
+    VkSurfaceKHR surface
+) {
+    VkDeviceSize bufferSize = sizeof(kIndices[0]) * kIndices.size();
+
+    VertexBufferContext stagingBuffer{};
+    createBuffer(
+        physicalDevice,
+        deviceContext.device,
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer.buffer,
+        stagingBuffer.memory
+    );
+
+    VertexBufferContext indexBuffer{};
+    createBuffer(
+        physicalDevice,
+        deviceContext.device,
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        indexBuffer.buffer,
+        indexBuffer.memory
+    );
+
+    try {
+        void* data = nullptr;
+        if (vkMapMemory(
+                deviceContext.device,
+                stagingBuffer.memory,
+                0,
+                bufferSize,
+                0,
+                &data
+            ) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to map index staging buffer memory.");
+        }
+        std::memcpy(data, kIndices.data(), static_cast<size_t>(bufferSize));
+        vkUnmapMemory(deviceContext.device, stagingBuffer.memory);
+
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(
+            physicalDevice,
+            surface
+        );
+        copyBuffer(
+            deviceContext.device,
+            deviceContext.graphicsQueue,
+            queueFamilyIndices.graphicsFamily.value(),
+            stagingBuffer.buffer,
+            indexBuffer.buffer,
+            bufferSize
+        );
+    } catch (...) {
+        destroyBuffer(deviceContext.device, stagingBuffer);
+        destroyBuffer(deviceContext.device, indexBuffer);
+        throw;
+    }
+
+    destroyBuffer(deviceContext.device, stagingBuffer);
+
+    std::cout << "Created index buffer.\n";
+    return indexBuffer;
+}
+
 void destroyVertexBuffer(VkDevice device, const VertexBufferContext& vertexBuffer) {
     destroyBuffer(device, vertexBuffer);
 }
@@ -1189,7 +1265,8 @@ CommandContext createCommandContext(
     const SwapChainContext& swapChainContext,
     VkRenderPass renderPass,
     const GraphicsPipelineContext& graphicsPipeline,
-    const VertexBufferContext& vertexBuffer
+    const VertexBufferContext& vertexBuffer,
+    const VertexBufferContext& indexBuffer
 ) {
     QueueFamilyIndices queueFamilyIndices = findQueueFamilies(
         physicalDevice,
@@ -1263,10 +1340,17 @@ CommandContext createCommandContext(
             0,
         };
         vkCmdBindVertexBuffers(context.buffers[i], 0, 1, vertexBuffers, offsets);
-        vkCmdDraw(
+        vkCmdBindIndexBuffer(
             context.buffers[i],
-            static_cast<uint32_t>(kVertices.size()),
+            indexBuffer.buffer,
+            0,
+            VK_INDEX_TYPE_UINT16
+        );
+        vkCmdDrawIndexed(
+            context.buffers[i],
+            static_cast<uint32_t>(kIndices.size()),
             1,
+            0,
             0,
             0
         );
@@ -1406,6 +1490,7 @@ void rebuildSwapChainResources(
     GraphicsPipelineContext& graphicsPipeline,
     CommandContext& commandContext,
     const VertexBufferContext& vertexBuffer,
+    const VertexBufferContext& indexBuffer,
     SyncContext& syncContext
 ) {
     int width = 0;
@@ -1457,7 +1542,8 @@ void rebuildSwapChainResources(
         swapChainContext,
         renderPass,
         graphicsPipeline,
-        vertexBuffer
+        vertexBuffer,
+        indexBuffer
     );
     syncContext = createSyncContext(
         deviceContext.device,
@@ -1582,7 +1668,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 16",
+            "Vulkan Lesson 17",
             nullptr,
             nullptr
         );
@@ -1626,6 +1712,11 @@ int main() {
             deviceContext,
             surface
         );
+        VertexBufferContext indexBuffer = createIndexBuffer(
+            physicalDevice,
+            deviceContext,
+            surface
+        );
         CommandContext commandContext = createCommandContext(
             deviceContext.device,
             physicalDevice,
@@ -1633,7 +1724,8 @@ int main() {
             swapChainContext,
             renderPass,
             graphicsPipeline,
-            vertexBuffer
+            vertexBuffer,
+            indexBuffer
         );
         SyncContext syncContext = createSyncContext(
             deviceContext.device,
@@ -1660,6 +1752,7 @@ int main() {
                     graphicsPipeline,
                     commandContext,
                     vertexBuffer,
+                    indexBuffer,
                     syncContext
                 );
             }
@@ -1674,6 +1767,7 @@ int main() {
             graphicsPipeline,
             commandContext
         );
+        destroyBuffer(deviceContext.device, indexBuffer);
         destroyVertexBuffer(deviceContext.device, vertexBuffer);
         vkDestroyDevice(deviceContext.device, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);

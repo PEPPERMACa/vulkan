@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 16.
+The code is currently at Lesson 17.
 
 Lessons completed:
 
@@ -30,6 +30,7 @@ Lessons completed:
 14. Swapchain recreation
 15. Vertex buffer
 16. Staging buffer
+17. Index buffer
 
 Current state:
 
@@ -65,13 +66,13 @@ Current state:
 [DONE] Vertex buffer
           |
 [DONE] Staging buffer
+          |
+[DONE] Index buffer
 ```
 
-The app now acquires a swapchain image, submits the matching command buffer to
-the graphics queue, and presents the rendered image. The triangle's position
-and color data now comes from a Vulkan vertex buffer instead of hardcoded
-arrays inside the vertex shader. That vertex buffer is filled through a staging
-buffer, then copied into device-local memory.
+The app now draws a rectangle from four unique vertices and a six-entry index
+buffer. Both the vertex and index data are uploaded through temporary staging
+buffers into device-local memory.
 
 ## GLFW
 
@@ -854,3 +855,23 @@ vkCmdBindVertexBuffers
 Lesson 16 keeps the same triangle on screen, but the final vertex buffer now
 lives in GPU-friendly device-local memory. The staging buffer is only an upload
 tool and is destroyed after the copy completes.
+
+### 14. Lesson 17 Index Buffer
+
+```text
+Four unique vertices       Six indices
+        |                       |
+        v                       v
+DEVICE_LOCAL vertex buffer  DEVICE_LOCAL index buffer
+        |                       |
+        +------ vkCmdDrawIndexed
+                        |
+                        v
+              Two connected triangles
+```
+
+Lesson 17 replaces the single triangle with a rectangle made from two
+triangles. The two triangles share vertices, so the index buffer stores the
+sequence `0, 1, 2, 2, 3, 0` instead of duplicating complete vertex records.
+The command buffer binds the index buffer with `vkCmdBindIndexBuffer` and draws
+it with `vkCmdDrawIndexed`.
