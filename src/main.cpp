@@ -1,7 +1,13 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -44,6 +50,13 @@ const std::vector<Vertex> kVertices = {
 const std::vector<uint16_t> kIndices = {
     0, 1, 2,
     2, 3, 0,
+};
+
+struct UniformBufferObject {
+    /* Uniform buffer object for storing transformation matrices, aligns to 16-byte boundary */
+    alignas(16) glm::mat4 model;    // represents the object's transformation in the world space
+    alignas(16) glm::mat4 view;     // represents the camera's position and orientation in the scene
+    alignas(16) glm::mat4 projection; // represents the camera's projection parameters, such as field of view and aspect ratio
 };
 
 struct QueueFamilyIndices {
@@ -89,6 +102,14 @@ struct CommandContext {
 struct VertexBufferContext {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+};
+
+struct UniformBufferContext {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    void* mappedMemory = nullptr;
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
 };
 
 struct SyncContext {
@@ -213,7 +234,7 @@ void destroyDebugUtilsMessengerEXT(
 VkInstance createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Lesson 17";
+    appInfo.pApplicationName = "Vulkan Lesson 18";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -777,7 +798,8 @@ std::array<VkVertexInputAttributeDescription, 2> getVertexAttributeDescriptions(
 GraphicsPipelineContext createGraphicsPipeline(
     VkDevice device,
     VkExtent2D swapChainExtent,
-    VkRenderPass renderPass
+    VkRenderPass renderPass,
+    VkDescriptorSetLayout descriptorSetLayout
 ) {
     const auto vertexShaderCode = readFile(
         std::string(SHADER_DIR) + "/triangle.vert.spv"
@@ -879,6 +901,8 @@ GraphicsPipelineContext createGraphicsPipeline(
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 
     GraphicsPipelineContext context{};
     if (vkCreatePipelineLayout(
@@ -1258,6 +1282,158 @@ void destroyVertexBuffer(VkDevice device, const VertexBufferContext& vertexBuffe
     destroyBuffer(device, vertexBuffer);
 }
 
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device) {
+    VkDescriptorSetLayoutBinding uniformBinding{};
+    uniformBinding.binding = 0;
+    uniformBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uniformBinding.descriptorCount = 1;
+    uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uniformBinding;
+
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    if (vkCreateDescriptorSetLayout(
+            device,
+            &layoutInfo,
+            nullptr,
+            &layout
+        ) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create descriptor set layout.");
+    }
+
+    return layout;
+}
+
+UniformBufferContext createUniformBuffer(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device,
+    VkDescriptorSetLayout descriptorSetLayout
+) {
+    UniformBufferContext context{};
+    createBuffer(
+        physicalDevice,
+        device,
+        sizeof(UniformBufferObject),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        context.buffer,
+        context.memory
+    );
+
+    if (vkMapMemory(
+            device,
+            context.memory,
+            0,
+            sizeof(UniformBufferObject),
+            0,
+            &context.mappedMemory
+        ) != VK_SUCCESS) {
+        destroyBuffer(device, {context.buffer, context.memory});
+        throw std::runtime_error("Failed to map uniform buffer memory.");
+    }
+
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+
+    if (vkCreateDescriptorPool(
+            device,
+            &poolInfo,
+            nullptr,
+            &context.descriptorPool
+        ) != VK_SUCCESS) {
+        vkUnmapMemory(device, context.memory);
+        destroyBuffer(device, {context.buffer, context.memory});
+        throw std::runtime_error("Failed to create descriptor pool.");
+    }
+
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = context.descriptorPool;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &descriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(
+            device,
+            &allocateInfo,
+            &context.descriptorSet
+        ) != VK_SUCCESS) {
+        vkDestroyDescriptorPool(device, context.descriptorPool, nullptr);
+        vkUnmapMemory(device, context.memory);
+        destroyBuffer(device, {context.buffer, context.memory});
+        throw std::runtime_error("Failed to allocate descriptor set.");
+    }
+
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = context.buffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(UniformBufferObject);
+
+    VkWriteDescriptorSet descriptorWrite{};
+    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite.dstSet = context.descriptorSet;
+    descriptorWrite.dstBinding = 0;
+    descriptorWrite.descriptorCount = 1;
+    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrite.pBufferInfo = &bufferInfo;
+
+    vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+
+    std::cout << "Created uniform buffer and descriptor set.\n";
+    return context;
+}
+
+void updateUniformBuffer(
+    const UniformBufferContext& context,
+    VkExtent2D swapChainExtent
+) {
+    static const auto startTime = std::chrono::high_resolution_clock::now();
+    const auto currentTime = std::chrono::high_resolution_clock::now();
+    const float elapsedSeconds =
+        std::chrono::duration<float>(currentTime - startTime).count();
+
+    UniformBufferObject uniform{};
+    uniform.model = glm::rotate(
+        glm::mat4(1.0F),    // Identity matrix
+        elapsedSeconds * glm::radians(45.0F),   // rotation angle in radians  
+        glm::vec3(0.0F, 0.0F, 1.0F)     // rotation axis (z-axis)
+    );
+    uniform.view = glm::lookAt(     // represents the camera's position and orientation in the scene
+        glm::vec3(0.0F, 0.0F, 2.0F),    // camera position
+        glm::vec3(0.0F, 0.0F, 0.0F),    // camera target
+        glm::vec3(0.0F, 1.0F, 0.0F)     // up vector (y-axis)
+    );
+    uniform.projection = glm::perspective(  // creates a perspective projection matrix
+        glm::radians(45.0F),
+        static_cast<float>(swapChainExtent.width) /
+            static_cast<float>(swapChainExtent.height),
+        0.1F,
+        10.0F
+    );
+    uniform.projection[1][1] *= -1.0F;
+
+    std::memcpy(context.mappedMemory, &uniform, sizeof(uniform));
+}
+
+void destroyUniformBuffer(VkDevice device, const UniformBufferContext& context) {
+    if (context.descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, context.descriptorPool, nullptr);
+    }
+    if (context.mappedMemory != nullptr) {
+        vkUnmapMemory(device, context.memory);
+    }
+    destroyBuffer(device, {context.buffer, context.memory});
+}
+
 CommandContext createCommandContext(
     VkDevice device,
     VkPhysicalDevice physicalDevice,
@@ -1266,7 +1442,8 @@ CommandContext createCommandContext(
     VkRenderPass renderPass,
     const GraphicsPipelineContext& graphicsPipeline,
     const VertexBufferContext& vertexBuffer,
-    const VertexBufferContext& indexBuffer
+    const VertexBufferContext& indexBuffer,
+    const UniformBufferContext& uniformBuffer
 ) {
     QueueFamilyIndices queueFamilyIndices = findQueueFamilies(
         physicalDevice,
@@ -1345,6 +1522,16 @@ CommandContext createCommandContext(
             indexBuffer.buffer,
             0,
             VK_INDEX_TYPE_UINT16
+        );
+        vkCmdBindDescriptorSets(
+            context.buffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            graphicsPipeline.layout,
+            0,
+            1,
+            &uniformBuffer.descriptorSet,
+            0,
+            nullptr
         );
         vkCmdDrawIndexed(
             context.buffers[i],
@@ -1491,6 +1678,8 @@ void rebuildSwapChainResources(
     CommandContext& commandContext,
     const VertexBufferContext& vertexBuffer,
     const VertexBufferContext& indexBuffer,
+    const UniformBufferContext& uniformBuffer,
+    VkDescriptorSetLayout descriptorSetLayout,
     SyncContext& syncContext
 ) {
     int width = 0;
@@ -1528,7 +1717,8 @@ void rebuildSwapChainResources(
     graphicsPipeline = createGraphicsPipeline(
         deviceContext.device,
         swapChainContext.extent,
-        renderPass
+        renderPass,
+        descriptorSetLayout
     );
     createFramebuffers(
         deviceContext.device,
@@ -1543,7 +1733,8 @@ void rebuildSwapChainResources(
         renderPass,
         graphicsPipeline,
         vertexBuffer,
-        indexBuffer
+        indexBuffer,
+        uniformBuffer
     );
     syncContext = createSyncContext(
         deviceContext.device,
@@ -1557,6 +1748,7 @@ bool drawFrame(
     const DeviceContext& deviceContext,
     const SwapChainContext& swapChainContext,
     const CommandContext& commandContext,
+    const UniformBufferContext& uniformBuffer,
     const SyncContext& syncContext,
     bool& framebufferResized
 ) {
@@ -1585,6 +1777,8 @@ bool drawFrame(
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("Failed to acquire swap chain image.");
     }
+
+    updateUniformBuffer(uniformBuffer, swapChainContext.extent);
 
     vkResetFences(deviceContext.device, 1, &syncContext.inFlightFence);
 
@@ -1668,7 +1862,7 @@ int main() {
         GLFWwindow* window = glfwCreateWindow(
             kWindowWidth,
             kWindowHeight,
-            "Vulkan Lesson 17",
+            "Vulkan Lesson 18",
             nullptr,
             nullptr
         );
@@ -1697,10 +1891,13 @@ int main() {
             deviceContext.device,
             swapChainContext.imageFormat
         );
+        VkDescriptorSetLayout descriptorSetLayout =
+            createDescriptorSetLayout(deviceContext.device);
         GraphicsPipelineContext graphicsPipeline = createGraphicsPipeline(
             deviceContext.device,
             swapChainContext.extent,
-            renderPass
+            renderPass,
+            descriptorSetLayout
         );
         createFramebuffers(
             deviceContext.device,
@@ -1717,6 +1914,11 @@ int main() {
             deviceContext,
             surface
         );
+        UniformBufferContext uniformBuffer = createUniformBuffer(
+            physicalDevice,
+            deviceContext.device,
+            descriptorSetLayout
+        );
         CommandContext commandContext = createCommandContext(
             deviceContext.device,
             physicalDevice,
@@ -1725,7 +1927,8 @@ int main() {
             renderPass,
             graphicsPipeline,
             vertexBuffer,
-            indexBuffer
+            indexBuffer,
+            uniformBuffer
         );
         SyncContext syncContext = createSyncContext(
             deviceContext.device,
@@ -1738,6 +1941,7 @@ int main() {
                 deviceContext,
                 swapChainContext,
                 commandContext,
+                uniformBuffer,
                 syncContext,
                 framebufferResized
             );
@@ -1753,6 +1957,8 @@ int main() {
                     commandContext,
                     vertexBuffer,
                     indexBuffer,
+                    uniformBuffer,
+                    descriptorSetLayout,
                     syncContext
                 );
             }
@@ -1767,8 +1973,14 @@ int main() {
             graphicsPipeline,
             commandContext
         );
+        destroyUniformBuffer(deviceContext.device, uniformBuffer);
         destroyBuffer(deviceContext.device, indexBuffer);
         destroyVertexBuffer(deviceContext.device, vertexBuffer);
+        vkDestroyDescriptorSetLayout(
+            deviceContext.device,
+            descriptorSetLayout,
+            nullptr
+        );
         vkDestroyDevice(deviceContext.device, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         if (debugMessenger != VK_NULL_HANDLE) {

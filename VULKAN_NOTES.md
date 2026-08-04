@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 17.
+The code is currently at Lesson 18.
 
 Lessons completed:
 
@@ -31,6 +31,7 @@ Lessons completed:
 15. Vertex buffer
 16. Staging buffer
 17. Index buffer
+18. Uniform buffer and descriptors
 
 Current state:
 
@@ -68,11 +69,13 @@ Current state:
 [DONE] Staging buffer
           |
 [DONE] Index buffer
+          |
+[DONE] Uniform buffer and descriptors
 ```
 
-The app now draws a rectangle from four unique vertices and a six-entry index
-buffer. Both the vertex and index data are uploaded through temporary staging
-buffers into device-local memory.
+The app now draws a rotating rectangle from four unique vertices and a
+six-entry index buffer. A persistently mapped uniform buffer sends model, view,
+and projection matrices to the vertex shader through a descriptor set.
 
 ## GLFW
 
@@ -875,3 +878,28 @@ triangles. The two triangles share vertices, so the index buffer stores the
 sequence `0, 1, 2, 2, 3, 0` instead of duplicating complete vertex records.
 The command buffer binds the index buffer with `vkCmdBindIndexBuffer` and draws
 it with `vkCmdDrawIndexed`.
+
+### 15. Lesson 18 Uniform Buffer and Descriptors
+
+```text
+CPU builds model/view/projection matrices
+                    |
+                    v
+       HOST_VISIBLE uniform buffer
+                    |
+                    v
+descriptor set -> descriptor set layout -> pipeline layout
+                    |
+                    v
+              vertex shader
+```
+
+Lesson 18 adds a `UniformBufferObject` containing model, view, and projection
+matrices. The CPU updates this persistently mapped buffer after waiting for the
+single in-flight frame to finish. Binding `0` in the descriptor set connects
+the buffer to the matching uniform block in `triangle.vert`.
+
+The model matrix rotates the rectangle over time. The view matrix places a
+camera in front of it, and the projection matrix adds perspective while using
+Vulkan's zero-to-one depth range. The projection's Y component is inverted to
+account for Vulkan's clip-coordinate convention.
