@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 18.
+The code is currently at Lesson 19.
 
 Lessons completed:
 
@@ -32,6 +32,7 @@ Lessons completed:
 16. Staging buffer
 17. Index buffer
 18. Uniform buffer and descriptors
+19. Texture image and sampler
 
 Current state:
 
@@ -71,11 +72,14 @@ Current state:
 [DONE] Index buffer
           |
 [DONE] Uniform buffer and descriptors
+          |
+[DONE] Texture image and sampler
 ```
 
-The app now draws a rotating rectangle from four unique vertices and a
-six-entry index buffer. A persistently mapped uniform buffer sends model, view,
-and projection matrices to the vertex shader through a descriptor set.
+The app now draws a rotating, textured rectangle from four unique vertices and
+a six-entry index buffer. A persistently mapped uniform buffer sends model,
+view, and projection matrices to the vertex shader, while a combined image
+sampler descriptor supplies a checkerboard texture to the fragment shader.
 
 ## GLFW
 
@@ -903,3 +907,25 @@ The model matrix rotates the rectangle over time. The view matrix places a
 camera in front of it, and the projection matrix adds perspective while using
 Vulkan's zero-to-one depth range. The projection's Y component is inverted to
 account for Vulkan's clip-coordinate convention.
+
+### 16. Lesson 19 Texture Image and Sampler
+
+```text
+CPU checkerboard pixels
+        |
+        v
+HOST_VISIBLE staging buffer
+        |
+        v
+DEVICE_LOCAL VkImage
+        |
+        v
+VkImageView + VkSampler -> descriptor binding 1 -> fragment shader
+```
+
+Lesson 19 adds texture coordinates to each vertex and uploads RGBA pixels into
+an optimally tiled, device-local image. The image transitions from `UNDEFINED`
+to `TRANSFER_DST_OPTIMAL` for the copy, then to
+`SHADER_READ_ONLY_OPTIMAL` for sampling. A combined image sampler at descriptor
+binding `1` lets the fragment shader map the checkerboard onto the rotating
+rectangle.

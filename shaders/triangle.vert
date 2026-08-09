@@ -2,8 +2,10 @@
 
 layout(location = 0) in vec2 inPosition;
 layout(location = 1) in vec3 inColor;
+layout(location = 2) in vec2 inTextureCoordinate;
 
 layout(location = 0) out vec3 fragmentColor;
+layout(location = 1) out vec2 fragmentTextureCoordinate;
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -18,4 +20,5 @@ void main() {
         ubo.model *
         vec4(inPosition, 0.0, 1.0);
     fragmentColor = inColor;
+    fragmentTextureCoordinate = inTextureCoordinate;
 }
