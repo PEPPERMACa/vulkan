@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 19.
+The code is currently at Lesson 20.
 
 Lessons completed:
 
@@ -33,6 +33,7 @@ Lessons completed:
 17. Index buffer
 18. Uniform buffer and descriptors
 19. Texture image and sampler
+20. Depth buffering
 
 Current state:
 
@@ -74,6 +75,8 @@ Current state:
 [DONE] Uniform buffer and descriptors
           |
 [DONE] Texture image and sampler
+          |
+[DONE] Depth buffering
 ```
 
 The app now draws a rotating, textured rectangle from four unique vertices and
@@ -929,3 +932,26 @@ to `TRANSFER_DST_OPTIMAL` for the copy, then to
 `SHADER_READ_ONLY_OPTIMAL` for sampling. A combined image sampler at descriptor
 binding `1` lets the fragment shader map the checkerboard onto the rotating
 rectangle.
+
+### 17. Lesson 20 Depth Buffering
+
+```text
+fragment depth
+      |
+      v
+depth comparison: incoming depth < stored depth?
+      |
+      +-- yes --> write colour and new depth
+      |
+      +-- no  --> discard hidden fragment
+```
+
+Lesson 20 adds a device-local depth image matching the swapchain extent. Its
+image view becomes attachment `1` in the render pass and every framebuffer.
+The graphics pipeline enables depth testing and depth writes with
+`VK_COMPARE_OP_LESS`, so the closest fragment wins regardless of draw order.
+Two overlapping rectangles demonstrate this: the near rectangle is submitted
+first and the far rectangle second, but hidden fragments from the far rectangle
+still fail the depth test.
+The depth buffer is cleared to `1.0` at the start of each frame and recreated
+whenever the swapchain size changes.
