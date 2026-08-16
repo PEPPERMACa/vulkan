@@ -10,7 +10,7 @@ describe many details that higher-level graphics APIs manage automatically.
 
 ## Current Study Progress
 
-The code is currently at Lesson 20.
+The code is currently at Lesson 21.
 
 Lessons completed:
 
@@ -34,6 +34,7 @@ Lessons completed:
 18. Uniform buffer and descriptors
 19. Texture image and sampler
 20. Depth buffering
+21. Mipmaps and texture filtering
 
 Current state:
 
@@ -77,6 +78,8 @@ Current state:
 [DONE] Texture image and sampler
           |
 [DONE] Depth buffering
+          |
+[DONE] Mipmaps and texture filtering
 ```
 
 The app now draws a rotating, textured rectangle from four unique vertices and
@@ -955,3 +958,22 @@ first and the far rectangle second, but hidden fragments from the far rectangle
 still fail the depth test.
 The depth buffer is cleared to `1.0` at the start of each frame and recreated
 whenever the swapchain size changes.
+
+### 18. Lesson 21 Mipmaps and Texture Filtering
+
+```text
+Mip 0: 4x4 source texture
+          |
+          v linear blit
+Mip 1: 2x2
+          |
+          v linear blit
+Mip 2: 1x1
+```
+
+Lesson 21 creates a complete mip chain for the checkerboard texture. Each
+smaller level is generated on the GPU with `vkCmdBlitImage`, while per-level
+barriers transition the previous level from transfer destination to transfer
+source and finally to shader-read-only layout. The image view exposes every
+mip level, and the sampler uses linear mipmap filtering to blend between
+levels when the texture becomes smaller on screen.
